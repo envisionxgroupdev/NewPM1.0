@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Movies collection is readable by everyone
+    match /movies/{movieId} {
+      allow read: if true;
+      allow write: if request.auth != null || true;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Reports collection
+    match /reports/{reportId} {
+      allow read, write: if true;
+    }
+
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read, write: if true;
+    }
+
+    // Default rule
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

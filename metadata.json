@@ -1,0 +1,8 @@
+{
+  "name": "PipocaMax",
+  "description": "Uma plataforma moderna de catálogo de filmes, séries e animes com recomendação por IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

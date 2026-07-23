@@ -1,0 +1,2561 @@
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { 
+  Film, Tv, Sparkles, Plus, Edit, Trash2, Shield, Users, Check, X,
+  FileSpreadsheet, Database, Sparkle, AlertTriangle, Loader2, Settings,
+  Search, Filter, RotateCcw, Star, Zap, CheckCircle2,
+  Eye, EyeOff, Play, Square, Flag, Clock
+} from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { 
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, AreaChart, Area, CartesianGrid
+} from "recharts";
+import { Movie } from "../types";
+
+interface AdminPanelProps {
+  movies: Movie[];
+  onMoviesUpdated: () => void;
+  currentUser: any;
+}
+
+export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: AdminPanelProps) {
+  const [activeSubTab, setActiveSubTab] = useState<"catalog" | "users" | "reports" | "stats" | "settings">("catalog");
+  const [users, setUsers] = useState<any[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+
+  // Reports states
+  const [reports, setReports] = useState<any[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const [reportsFilter, setReportsFilter] = useState<"todos" | "Pendente" | "Em Análise" | "Resolvido">("todos");
+
+  // Title Form states
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingMovie, setEditingMovie] = useState<Movie | null>(null);
+  
+  const [title, setTitle] = useState("");
+  const [originalTitle, setOriginalTitle] = useState("");
+  const [type, setType] = useState<"filme" | "serie" | "anime">("filme");
+  const [year, setYear] = useState(2026);
+  const [duration, setDuration] = useState("120 min");
+  const [rating, setRating] = useState(8.0);
+  const [genres, setGenres] = useState("Ação, Aventura");
+  const [synopsis, setSynopsis] = useState("");
+  const [backdropUrl, setBackdropUrl] = useState("");
+  const [posterUrl, setPosterUrl] = useState("");
+  const [trailerVideoId, setTrailerVideoId] = useState("");
+  const [cast, setCast] = useState("");
+  const [director, setDirector] = useState("");
+  const [featured, setFeatured] = useState(false);
+  const [imdbId, setImdbId] = useState("");
+
+  const [formError, setFormError] = useState("");
+  const [formSuccess, setFormSuccess] = useState("");
+  const [formSubmitting, setFormSubmitting] = useState(false);
+
+  // Catalog search and filter states
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogTypeFilter, setCatalogTypeFilter] = useState<"todos" | "filme" | "serie" | "anime">("todos");
+  const [catalogGenreFilter, setCatalogGenreFilter] = useState("todos");
+  const [userSearchTerm, setUserSearchTerm] = useState("");
+
+  // TMDB Import Modal states
+  const [isTmdbSearchOpen, setIsTmdbSearchOpen] = useState(false);
+  const [tmdbApiKey, setTmdbApiKey] = useState(() => localStorage.getItem("tmdb_api_key") || "");
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [tmdbSearchQuery, setTmdbSearchQuery] = useState("");
+  const [tmdbSearchYear, setTmdbSearchYear] = useState("2026");
+  const [tmdbSearchType, setTmdbSearchType] = useState<"todos" | "filme" | "serie" | "anime">("todos");
+  const [tmdbPage, setTmdbPage] = useState(1);
+  const [tmdbTotalPages, setTmdbTotalPages] = useState(1);
+  const [tmdbTotalResults, setTmdbTotalResults] = useState(0);
+  const [tmdbSearchResults, setTmdbSearchResults] = useState<any[]>([]);
+  const [tmdbLoading, setTmdbLoading] = useState(false);
+  const [tmdbError, setTmdbError] = useState("");
+  const [importingId, setImportingId] = useState<string | null>(null);
+  const [directImportingId, setDirectImportingId] = useState<string | null>(null);
+  const [addedTmdbIds, setAddedTmdbIds] = useState<string[]>([]);
+
+  // Batch Auto-Import states
+  const [importTab, setImportTab] = useState<"search" | "batch">("search");
+  const [batchTargetCount, setBatchTargetCount] = useState<number>(10);
+  const [batchType, setBatchType] = useState<"todos" | "filme" | "serie" | "anime">("todos");
+  const [batchYear, setBatchYear] = useState<string>("2026");
+  const [batchRunning, setBatchRunning] = useState<boolean>(false);
+  const [batchProgress, setBatchProgress] = useState<{
+    current: number;
+    total: number;
+    currentTitle: string;
+    addedCount: number;
+    errorCount: number;
+  } | null>(null);
+  const [batchResultSummary, setBatchResultSummary] = useState<{
+    added: number;
+    titles: string[];
+  } | null>(null);
+  const batchCancelledRef = useRef<boolean>(false);
+
+  // Set of all existing TMDB IDs, IMDb IDs, and normalized titles for complete duplicate prevention
+  const existingCatalogKeys = useMemo(() => {
+    const tmdbSet = new Set<string>();
+    const imdbSet = new Set<string>();
+    const titleSet = new Set<string>();
+
+    const normalize = (str: string) => str ? str.toLowerCase().replace(/[^a-z0-9]/g, "").trim() : "";
+
+    movies.forEach(m => {
+      if (m.tmdbId) tmdbSet.add(String(m.tmdbId));
+      if (m.imdbId) imdbSet.add(String(m.imdbId));
+      if (m.title) titleSet.add(normalize(m.title));
+      if (m.originalTitle) titleSet.add(normalize(m.originalTitle));
+    });
+
+    addedTmdbIds.forEach(id => tmdbSet.add(String(id)));
+
+    return { tmdbSet, imdbSet, titleSet, normalize };
+  }, [movies, addedTmdbIds]);
+
+  const isAlreadyInCatalog = (item: any) => {
+    if (!item) return false;
+    const itemId = String(item.tmdbId || item.id || "");
+    const imdbId = String(item.imdbId || "");
+    const title = item.title || item.name || "";
+    const originalTitle = item.originalTitle || item.original_title || item.original_name || "";
+
+    const { tmdbSet, imdbSet, titleSet, normalize } = existingCatalogKeys;
+
+    if (itemId && tmdbSet.has(itemId)) return true;
+    if (imdbId && imdbSet.has(imdbId)) return true;
+    if (title && titleSet.has(normalize(title))) return true;
+    if (originalTitle && titleSet.has(normalize(originalTitle))) return true;
+
+    return false;
+  };
+
+  // Get dynamic unique genres from all movies
+  const availableGenres = useMemo(() => {
+    const genreSet = new Set<string>();
+    movies.forEach((m) => {
+      if (Array.isArray(m.genres)) {
+        m.genres.forEach((g) => genreSet.add(g));
+      }
+    });
+    return ["todos", ...Array.from(genreSet).sort()];
+  }, [movies]);
+
+  // Filtered movies to display in the catalog table
+  const filteredCatalogMovies = useMemo(() => {
+    return movies.filter((m) => {
+      const matchSearch = 
+        m.title.toLowerCase().includes(catalogSearch.toLowerCase()) ||
+        (m.originalTitle && m.originalTitle.toLowerCase().includes(catalogSearch.toLowerCase()));
+      const matchType = catalogTypeFilter === "todos" || m.type === catalogTypeFilter;
+      const matchGenre = catalogGenreFilter === "todos" || (Array.isArray(m.genres) && m.genres.includes(catalogGenreFilter));
+      return matchSearch && matchType && matchGenre;
+    });
+  }, [movies, catalogSearch, catalogTypeFilter, catalogGenreFilter]);
+
+  // Filtered users for admin panel
+  const filteredUsers = useMemo(() => {
+    if (!userSearchTerm.trim()) return users;
+    const q = userSearchTerm.toLowerCase();
+    return users.filter((u: any) => 
+      (u.name && u.name.toLowerCase().includes(q)) ||
+      (u.email && u.email.toLowerCase().includes(q))
+    );
+  }, [users, userSearchTerm]);
+
+  // Stats calculations for Recharts
+  const genreData = useMemo(() => {
+    const counts: Record<string, number> = {};
+    movies.forEach((m) => {
+      if (Array.isArray(m.genres)) {
+        m.genres.forEach((g) => {
+          counts[g] = (counts[g] || 0) + 1;
+        });
+      }
+    });
+    return Object.entries(counts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8); // Top 8 genres
+  }, [movies]);
+
+  const typeData = useMemo(() => {
+    const filmCount = movies.filter(m => m.type === "filme").length;
+    const serieCount = movies.filter(m => m.type === "serie").length;
+    const animeCount = movies.filter(m => m.type === "anime").length;
+    return [
+      { name: "Filmes", value: filmCount, color: "#e50914" },
+      { name: "Séries", value: serieCount, color: "#a855f7" },
+      { name: "Animes", value: animeCount, color: "#f59e0b" }
+    ].filter(t => t.value > 0);
+  }, [movies]);
+
+  const ratingDistribution = useMemo(() => {
+    const bins = {
+      "Nota 9.0+": 0,
+      "Nota 8.0-8.9": 0,
+      "Nota 7.0-7.9": 0,
+      "Nota 6.0-6.9": 0,
+      "Nota < 6.0": 0
+    };
+    movies.forEach((m) => {
+      const r = m.rating;
+      if (r >= 9.0) bins["Nota 9.0+"]++;
+      else if (r >= 8.0) bins["Nota 8.0-8.9"]++;
+      else if (r >= 7.0) bins["Nota 7.0-7.9"]++;
+      else if (r >= 6.0) bins["Nota 6.0-6.9"]++;
+      else bins["Nota < 6.0"]++;
+    });
+    return Object.entries(bins).map(([name, value]) => ({ name, value }));
+  }, [movies]);
+
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsFeedback, setSettingsFeedback] = useState({ success: "", error: "" });
+
+  const handleSaveSettingsToDb = async () => {
+    setSavingSettings(true);
+    setSettingsFeedback({ success: "", error: "" });
+    try {
+      const response = await fetch("/api/settings/tmdb", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "x-user-email": currentUser?.email || ""
+        },
+        body: JSON.stringify({ apiKey: tmdbApiKey })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setSettingsFeedback({ success: data.message || "Chave do TMDB salva com sucesso no banco de dados!", error: "" });
+      } else {
+        setSettingsFeedback({ success: "", error: data.error || "Erro ao salvar configurações." });
+      }
+    } catch (err: any) {
+      setSettingsFeedback({ success: "", error: "Erro de conexão: " + err.message });
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  // Load TMDB API key from database on mount
+  useEffect(() => {
+    const fetchTmdbApiKey = async () => {
+      try {
+        const response = await fetch("/api/settings/tmdb", {
+          headers: {
+            "x-user-email": currentUser?.email || ""
+          }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.apiKey) {
+            setTmdbApiKey(data.apiKey);
+          }
+        }
+      } catch (err) {
+        console.error("Erro ao buscar chave TMDB do banco:", err);
+      }
+    };
+    fetchTmdbApiKey();
+  }, []);
+
+  // Save TMDB API key to local storage when changed
+  useEffect(() => {
+    if (tmdbApiKey) {
+      localStorage.setItem("tmdb_api_key", tmdbApiKey);
+    } else {
+      localStorage.removeItem("tmdb_api_key");
+    }
+  }, [tmdbApiKey]);
+
+  const handleTmdbSearch = async (e?: React.FormEvent, pageNumber = 1) => {
+    if (e) e.preventDefault();
+
+    setTmdbLoading(true);
+    setTmdbError("");
+    setTmdbSearchResults([]);
+
+    try {
+      const headers: Record<string, string> = {
+        "x-user-email": currentUser?.email || ""
+      };
+      if (tmdbApiKey) {
+        headers["x-tmdb-api-key"] = tmdbApiKey;
+      }
+
+      const queryParam = encodeURIComponent(tmdbSearchQuery.trim());
+      const yearParam = encodeURIComponent(tmdbSearchYear.trim());
+      const url = `/api/tmdb/search?query=${queryParam}&type=${tmdbSearchType}&year=${yearParam}&page=${pageNumber}`;
+
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Erro ao buscar dados do TMDB. Verifique sua chave de API.");
+      }
+
+      const data = await response.json();
+      setTmdbSearchResults(data.results || []);
+      setTmdbPage(data.page || 1);
+      setTmdbTotalPages(data.totalPages || 1);
+      setTmdbTotalResults(data.totalResults || 0);
+    } catch (err: any) {
+      console.error(err);
+      setTmdbError(err.message || "Falha na conexão.");
+    } finally {
+      setTmdbLoading(false);
+    }
+  };
+
+  // Auto load popular/recent titles when opening TMDB search modal
+  useEffect(() => {
+    if (isTmdbSearchOpen && tmdbSearchResults.length === 0 && !tmdbLoading) {
+      handleTmdbSearch(undefined, 1);
+    }
+  }, [isTmdbSearchOpen]);
+
+  // 1-Click Direct Import
+  const handleDirectImportTmdb = async (item: any) => {
+    const tmdbId = item.tmdbId || item.id;
+    setDirectImportingId(tmdbId);
+    setTmdbError("");
+    try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "x-user-email": currentUser?.email || ""
+      };
+      if (tmdbApiKey) {
+        headers["x-tmdb-api-key"] = tmdbApiKey;
+      }
+
+      const response = await fetch("/api/tmdb/import-direct", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ tmdbId, type: item.type })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Falha ao importar o título diretamente.");
+      }
+
+      const data = await response.json();
+      if (data.success && data.movie) {
+        setAddedTmdbIds(prev => [...prev, String(tmdbId)]);
+        onMoviesUpdated();
+      }
+    } catch (err: any) {
+      console.error(err);
+      setTmdbError(err.message || "Erro ao importar do TMDB.");
+    } finally {
+      setDirectImportingId(null);
+    }
+  };
+
+  const handleStopBatch = () => {
+    batchCancelledRef.current = true;
+  };
+
+  const handleRunBatchAutoImport = async () => {
+    if (batchRunning) return;
+    batchCancelledRef.current = false;
+    setBatchRunning(true);
+    setBatchResultSummary(null);
+    setTmdbError("");
+
+    const targetTotal = Math.max(1, Math.min(batchTargetCount, 100));
+    setBatchProgress({
+      current: 0,
+      total: targetTotal,
+      currentTitle: "Conectando ao catálogo do TMDB...",
+      addedCount: 0,
+      errorCount: 0
+    });
+
+    const headers: Record<string, string> = {
+      "x-user-email": currentUser?.email || "",
+      "Content-Type": "application/json"
+    };
+    if (tmdbApiKey) {
+      headers["x-tmdb-api-key"] = tmdbApiKey;
+    }
+
+    let addedCount = 0;
+    let errorCount = 0;
+    let currentPage = 1;
+    const addedTitles: string[] = [];
+
+    try {
+      while (addedCount < targetTotal && currentPage <= 50 && !batchCancelledRef.current) {
+        const queryParam = encodeURIComponent(tmdbSearchQuery.trim());
+        const yearParam = encodeURIComponent(batchYear.trim());
+        const searchUrl = `/api/tmdb/search?query=${queryParam}&type=${batchType}&year=${yearParam}&page=${currentPage}`;
+
+        const res = await fetch(searchUrl, { headers });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || "Falha ao consultar o TMDB.");
+        }
+
+        const data = await res.json();
+        const results: any[] = data.results || [];
+
+        if (results.length === 0) {
+          break;
+        }
+
+        for (const item of results) {
+          if (addedCount >= targetTotal || batchCancelledRef.current) break;
+
+          const itemId = String(item.tmdbId || item.id);
+          if (isAlreadyInCatalog(item)) {
+            continue;
+          }
+
+          setBatchProgress({
+            current: addedCount + 1,
+            total: targetTotal,
+            currentTitle: item.title || item.name || "Processando título...",
+            addedCount,
+            errorCount
+          });
+
+          try {
+            const importRes = await fetch("/api/tmdb/import-direct", {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ tmdbId: itemId, type: item.type })
+            });
+
+            if (importRes.ok) {
+              const importData = await importRes.json();
+              if (importData.success && importData.movie) {
+                addedCount++;
+                const importedTitle = importData.movie.title || item.title;
+                addedTitles.push(importedTitle);
+                setAddedTmdbIds(prev => [...prev, itemId]);
+              } else {
+                errorCount++;
+              }
+            } else {
+              errorCount++;
+            }
+          } catch (impErr) {
+            console.error("Erro ao importar no lote:", impErr);
+            errorCount++;
+          }
+
+          await new Promise(r => setTimeout(r, 180));
+        }
+
+        currentPage++;
+      }
+
+      onMoviesUpdated();
+      setBatchResultSummary({
+        added: addedCount,
+        titles: addedTitles
+      });
+    } catch (err: any) {
+      console.error("Erro no lote do TMDB:", err);
+      setTmdbError(err.message || "Falha na importação automática.");
+    } finally {
+      setBatchRunning(false);
+      setBatchProgress(null);
+    }
+  };
+
+  const handleImportTmdb = async (tmdbId: string, itemType: "filme" | "serie") => {
+    setImportingId(tmdbId);
+    setTmdbError("");
+    try {
+      const headers: Record<string, string> = {
+        "x-user-email": currentUser?.email || ""
+      };
+      if (tmdbApiKey) {
+        headers["x-tmdb-api-key"] = tmdbApiKey;
+      }
+      
+      const response = await fetch(`/api/tmdb/details?id=${tmdbId}&type=${itemType}`, {
+        headers
+      });
+      
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Falha ao obter detalhes do título");
+      }
+      
+      const { result } = await response.json();
+      
+      // Map to form states
+      setTitle(result.title);
+      setOriginalTitle(result.originalTitle);
+      setType(result.type);
+      setYear(result.year);
+      setDuration(result.duration);
+      setRating(result.rating);
+      setGenres(result.genres.join(", "));
+      setSynopsis(result.synopsis);
+      setBackdropUrl(result.backdropUrl);
+      setPosterUrl(result.posterUrl);
+      setTrailerVideoId(result.trailerVideoId);
+      setCast(result.cast.join(", "));
+      setDirector(result.director);
+      setFeatured(false);
+      setImdbId(result.imdbId);
+      
+      setEditingMovie(null); // Adding, not editing
+      setFormError("");
+      setFormSuccess("Dados importados do TMDB com sucesso! Revise os campos e clique em Salvar.");
+      
+      setIsTmdbSearchOpen(false); // Close search modal
+      setIsFormOpen(true); // Open edit/add modal prefilled!
+    } catch (err: any) {
+      console.error(err);
+      setTmdbError(err.message || "Erro desconhecido");
+    } finally {
+      setImportingId(null);
+    }
+  };
+
+  // Load users list
+  const loadUsers = async () => {
+    setUsersLoading(true);
+    try {
+      const response = await fetch("/api/users", {
+        headers: {
+          "x-user-email": currentUser?.email || ""
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setUsers(data.users || []);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar usuários:", err);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSubTab === "users") {
+      loadUsers();
+    } else if (activeSubTab === "reports") {
+      loadReports();
+    }
+  }, [activeSubTab]);
+
+  // Load Reports
+  const loadReports = async () => {
+    setReportsLoading(true);
+    try {
+      const response = await fetch("/api/reports", {
+        headers: {
+          "x-user-email": currentUser?.email || ""
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setReports(data.reports || []);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar relatórios:", err);
+    } finally {
+      setReportsLoading(false);
+    }
+  };
+
+  const handleUpdateReportStatus = async (reportId: string, newStatus: string) => {
+    try {
+      const response = await fetch(`/api/reports/${reportId}/status`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": currentUser?.email || ""
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
+
+      if (response.ok) {
+        setReports(prev => prev.map(r => r.id === reportId ? { ...r, status: newStatus } : r));
+      } else {
+        alert("Falha ao atualizar status da denúncia.");
+      }
+    } catch (err) {
+      alert("Erro ao conectar com o servidor.");
+    }
+  };
+
+  const handleDeleteReport = async (reportId: string) => {
+    if (!window.confirm("Deseja excluir esta denúncia permanentemente?")) return;
+
+    try {
+      const response = await fetch(`/api/reports/${reportId}`, {
+        method: "DELETE",
+        headers: {
+          "x-user-email": currentUser?.email || ""
+        }
+      });
+
+      if (response.ok) {
+        setReports(prev => prev.filter(r => r.id !== reportId));
+      } else {
+        alert("Falha ao excluir denúncia.");
+      }
+    } catch (err) {
+      alert("Erro ao conectar com o servidor.");
+    }
+  };
+
+  // Open Form for Adding
+  const handleOpenAdd = () => {
+    setEditingMovie(null);
+    setTitle("");
+    setOriginalTitle("");
+    setType("filme");
+    setYear(new Date().getFullYear());
+    setDuration("120 min");
+    setRating(8.0);
+    setGenres("Ação, Drama");
+    setSynopsis("");
+    setBackdropUrl("https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1000");
+    setPosterUrl("https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=500");
+    setTrailerVideoId("dQw4w9WgXcQ");
+    setCast("Ator 1, Atriz 2");
+    setDirector("Diretor Famoso");
+    setFeatured(false);
+    setImdbId("");
+    
+    setFormError("");
+    setFormSuccess("");
+    setIsFormOpen(true);
+  };
+
+  // Open Form for Editing
+  const handleOpenEdit = (movie: Movie) => {
+    setEditingMovie(movie);
+    setTitle(movie.title);
+    setOriginalTitle(movie.originalTitle || movie.title);
+    setType(movie.type);
+    setYear(movie.year);
+    setDuration(movie.duration);
+    setRating(movie.rating);
+    setGenres(movie.genres.join(", "));
+    setSynopsis(movie.synopsis);
+    setBackdropUrl(movie.backdropUrl);
+    setPosterUrl(movie.posterUrl);
+    setTrailerVideoId(movie.trailerVideoId);
+    setCast(movie.cast.join(", "));
+    setDirector(movie.director);
+    setFeatured(movie.featured || false);
+    setImdbId(movie.imdbId || "");
+
+    setFormError("");
+    setFormSuccess("");
+    setIsFormOpen(true);
+  };
+
+  // Submit Form (Create / Edit)
+  const handleFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError("");
+    setFormSuccess("");
+    setFormSubmitting(true);
+
+    const genresArray = genres.split(",").map(g => g.trim()).filter(Boolean);
+    const castArray = cast.split(",").map(c => c.trim()).filter(Boolean);
+
+    const payload = {
+      title,
+      originalTitle,
+      type,
+      year: Number(year),
+      duration,
+      rating: Number(rating),
+      genres: genresArray,
+      synopsis,
+      backdropUrl,
+      posterUrl,
+      trailerVideoId,
+      cast: castArray,
+      director,
+      featured,
+      imdbId,
+    };
+
+    const url = editingMovie ? `/api/movies/${editingMovie.id}` : "/api/movies";
+    const method = editingMovie ? "PUT" : "POST";
+
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: { 
+          "Content-Type": "application/json",
+          "x-user-email": currentUser?.email || ""
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Ocorreu um erro ao salvar o título.");
+      }
+
+      setFormSuccess(editingMovie ? "Título atualizado com sucesso!" : "Título adicionado com sucesso!");
+      onMoviesUpdated(); // Sync catalog in parent
+      
+      setTimeout(() => {
+        setIsFormOpen(false);
+      }, 1000);
+    } catch (err: any) {
+      setFormError(err.message || "Erro de conexão.");
+    } finally {
+      setFormSubmitting(false);
+    }
+  };
+
+  // Toggle Featured/Lançamento
+  const handleToggleFeatured = async (movie: Movie) => {
+    try {
+      const updatedMovie = {
+        ...movie,
+        featured: !movie.featured
+      };
+      const response = await fetch(`/api/movies/${movie.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": currentUser?.email || ""
+        },
+        body: JSON.stringify(updatedMovie)
+      });
+
+      if (response.ok) {
+        onMoviesUpdated();
+      } else {
+        alert("Erro ao alterar status de lançamento.");
+      }
+    } catch (e) {
+      alert("Erro ao conectar com o servidor.");
+    }
+  };
+
+  // Delete Movie
+  const handleDeleteMovie = async (movieId: string, title: string) => {
+    if (!window.confirm(`Tem certeza que deseja excluir o título "${title}" permanentemente do catálogo?`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/movies/${movieId}`, {
+        method: "DELETE",
+        headers: {
+          "x-user-email": currentUser?.email || ""
+        }
+      });
+
+      if (response.ok) {
+        onMoviesUpdated();
+        alert("Título excluído com sucesso!");
+      } else {
+        const err = await response.json();
+        alert(`Erro ao excluir: ${err.error || "Erro desconhecido"}`);
+      }
+    } catch (e) {
+      alert("Erro ao conectar com o servidor.");
+    }
+  };
+
+  // Update User Role
+  const handleToggleUserRole = async (userId: string, currentRole: string, userName: string) => {
+    if (userId === "admin-default") {
+      alert("O administrador principal padrão não pode ter seu nível de acesso alterado.");
+      return;
+    }
+
+    const newRole = currentRole === "admin" ? "user" : "admin";
+    if (!window.confirm(`Deseja alterar o nível de acesso de ${userName} para ${newRole.toUpperCase()}?`)) {
+      return;
+    }
+
+    // Optimistically update local users state
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
+
+    try {
+      const response = await fetch(`/api/users/${userId}/role`, {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json",
+          "x-user-email": currentUser?.email || ""
+        },
+        body: JSON.stringify({ role: newRole })
+      });
+
+      if (response.ok) {
+        loadUsers();
+      } else {
+        const err = await response.json().catch(() => ({}));
+        alert(`Erro ao alterar nível de acesso: ${err.error || "Ação não permitida"}`);
+        loadUsers();
+      }
+    } catch (e) {
+      alert("Erro ao conectar ao servidor.");
+      loadUsers();
+    }
+  };
+
+  // Delete User
+  const handleDeleteUser = async (userId: string, userName: string) => {
+    if (userId === "admin-default") {
+      alert("O administrador principal padrão não pode ser excluído.");
+      return;
+    }
+
+    if (userId === currentUser?.id) {
+      alert("Você não pode excluir a si mesmo enquanto estiver logado.");
+      return;
+    }
+
+    if (!window.confirm(`Deseja remover o usuário ${userName} permanentemente do site?`)) {
+      return;
+    }
+
+    // Optimistically remove user from local users state
+    setUsers(prev => prev.filter(u => u.id !== userId));
+
+    try {
+      const response = await fetch(`/api/users/${userId}`, {
+        method: "DELETE",
+        headers: {
+          "x-user-email": currentUser?.email || ""
+        }
+      });
+
+      if (response.ok) {
+        loadUsers();
+      } else {
+        const err = await response.json().catch(() => ({}));
+        alert(`Erro ao excluir usuário: ${err.error || "Ação não permitida"}`);
+        loadUsers();
+      }
+    } catch (e) {
+      alert("Erro ao conectar com o servidor.");
+      loadUsers();
+    }
+  };
+
+  // Type Counts
+  const totalMovies = movies.filter(m => m.type === "filme").length;
+  const totalSeries = movies.filter(m => m.type === "serie").length;
+  const totalAnimes = movies.filter(m => m.type === "anime").length;
+  const featuredTitles = movies.filter(m => m.featured).length;
+
+  return (
+    <div className="bg-black text-white min-h-screen p-4 md:p-8" id="admin-panel-container">
+      
+      {/* Header Panel */}
+      <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between border-b border-gray-900 pb-6 mb-8 gap-4">
+        <div>
+          <div className="flex items-center gap-2 text-brand-primary text-xs font-black uppercase tracking-wider mb-1">
+            <Shield className="w-4 h-4 animate-pulse" />
+            <span>Painel Administrativo PipocaMax</span>
+          </div>
+          <h1 className="text-2xl md:text-3xl font-display font-black tracking-tight text-white">
+            Painel de Controle
+          </h1>
+          <p className="text-xs md:text-sm text-gray-400 mt-1">
+            Olá, <strong className="text-gray-200">{currentUser?.name || "Administrador"}</strong>. Gerencie o catálogo, animes, séries, filmes e usuários.
+          </p>
+        </div>
+
+        {/* Mini Tab Links */}
+        <div className="flex items-center gap-1.5 bg-[#0e0e0e] border border-gray-900 p-1.5 rounded-xl w-full md:w-auto overflow-x-auto no-scrollbar">
+          <button
+            onClick={() => setActiveSubTab("catalog")}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0 whitespace-nowrap ${
+              activeSubTab === "catalog"
+                ? "bg-brand-primary text-white shadow-md shadow-red-600/20"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            <Film className="w-3.5 h-3.5" />
+            <span>Gerenciar Catálogo</span>
+          </button>
+
+          <button
+            onClick={() => setIsTmdbSearchOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 whitespace-nowrap bg-emerald-950/80 hover:bg-emerald-900/90 text-emerald-400 border border-emerald-800/60 shadow-md shadow-emerald-900/20"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+            <span>Importar do TMDB</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab("users")}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0 whitespace-nowrap ${
+              activeSubTab === "users"
+                ? "bg-brand-primary text-white shadow-md shadow-red-600/20"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Usuários</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab("reports")}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0 whitespace-nowrap relative ${
+              activeSubTab === "reports"
+                ? "bg-brand-primary text-white shadow-md shadow-red-600/20"
+                : "text-amber-400 hover:text-amber-300 hover:bg-amber-950/20"
+            }`}
+          >
+            <Flag className="w-3.5 h-3.5" />
+            <span>Denúncias & Relatórios</span>
+            {reports.filter(r => r.status === "Pendente").length > 0 && (
+              <span className="bg-amber-500 text-black font-black text-[9px] px-1.5 py-0.2 rounded-full">
+                {reports.filter(r => r.status === "Pendente").length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab("stats")}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0 whitespace-nowrap ${
+              activeSubTab === "stats"
+                ? "bg-brand-primary text-white shadow-md shadow-red-600/20"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span>Métricas do Site</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab("settings")}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0 whitespace-nowrap ${
+              activeSubTab === "settings"
+                ? "bg-brand-primary text-white shadow-md shadow-red-600/20"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            <Settings className="w-3.5 h-3.5" />
+            <span>Configurações</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto">
+        
+        {/* VIEW 1: CATALOG MANAGEMENT */}
+        {activeSubTab === "catalog" && (
+          <div>
+            <div className="flex flex-wrap items-center gap-3 mb-6">
+              <h2 className="text-lg font-bold flex items-center gap-2 text-gray-200 mr-auto">
+                <FileSpreadsheet className="w-4 h-4 text-brand-primary" />
+                <span>Lista Geral de Títulos ({movies.length})</span>
+              </h2>
+
+              <button
+                onClick={() => setIsTmdbSearchOpen(true)}
+                className="bg-[#00d573] hover:bg-[#00bc65] text-black text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-lg shadow-green-500/10 hover:scale-102 transition-all"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>Importar TMDB</span>
+              </button>
+
+              <button
+                onClick={handleOpenAdd}
+                className="bg-brand-primary hover:bg-brand-secondary text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-lg shadow-red-600/10 hover:scale-102 transition-all"
+                id="btn-add-movie"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Adicionar Manual</span>
+              </button>
+            </div>
+
+            {/* Search & Filters Row */}
+            <div className="bg-[#0c0c0c] border border-gray-900/60 p-4 rounded-2xl mb-6 flex flex-col md:flex-row gap-3 items-center">
+              {/* Text Search */}
+              <div className="relative w-full md:flex-1">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                <input
+                  type="text"
+                  placeholder="Pesquisar por título ou título original..."
+                  value={catalogSearch}
+                  onChange={(e) => setCatalogSearch(e.target.value)}
+                  className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-xs pl-10 pr-4 py-2.5 rounded-xl transition-all"
+                />
+                {catalogSearch && (
+                  <button 
+                    onClick={() => setCatalogSearch("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white text-xs font-bold"
+                  >
+                    Limpar
+                  </button>
+                )}
+              </div>
+
+              {/* Type Filter */}
+              <div className="relative w-full md:w-48">
+                <select
+                  value={catalogTypeFilter}
+                  onChange={(e: any) => setCatalogTypeFilter(e.target.value)}
+                  className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-xs px-3 py-2.5 rounded-xl appearance-none cursor-pointer"
+                >
+                  <option value="todos">Todos os Tipos</option>
+                  <option value="filme">Filme</option>
+                  <option value="serie">Série</option>
+                  <option value="anime">Anime</option>
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-500">
+                  <Filter className="w-3.5 h-3.5" />
+                </div>
+              </div>
+
+              {/* Genre Filter */}
+              <div className="relative w-full md:w-56">
+                <select
+                  value={catalogGenreFilter}
+                  onChange={(e) => setCatalogGenreFilter(e.target.value)}
+                  className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-xs px-3 py-2.5 rounded-xl appearance-none cursor-pointer capitalize"
+                >
+                  <option value="todos">Todos os Gêneros</option>
+                  {availableGenres.filter(g => g !== "todos").map((genre) => (
+                    <option key={genre} value={genre}>{genre}</option>
+                  ))}
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-500">
+                  <Filter className="w-3.5 h-3.5" />
+                </div>
+              </div>
+
+              {/* Reset Button */}
+              {(catalogSearch || catalogTypeFilter !== "todos" || catalogGenreFilter !== "todos") && (
+                <button
+                  onClick={() => {
+                    setCatalogSearch("");
+                    setCatalogTypeFilter("todos");
+                    setCatalogGenreFilter("todos");
+                  }}
+                  className="w-full md:w-auto bg-gray-900 hover:bg-gray-800 text-gray-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Limpar Filtros</span>
+                </button>
+              )}
+            </div>
+
+            {/* Titles List Table */}
+            <div className="bg-[#0c0c0c] border border-gray-950 rounded-2xl overflow-hidden shadow-xl">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs text-gray-300">
+                  <thead className="bg-[#121212] text-gray-400 border-b border-gray-900/60 uppercase text-[10px] tracking-wider font-bold">
+                    <tr>
+                      <th className="py-3.5 px-4">Poster</th>
+                      <th className="py-3.5 px-4">Título / Ano</th>
+                      <th className="py-3.5 px-4">Tipo</th>
+                      <th className="py-3.5 px-4">Gêneros</th>
+                      <th className="py-3.5 px-4">IMDB / Avaliação</th>
+                      <th className="py-3.5 px-4">Destaque</th>
+                      <th className="py-3.5 px-4 text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-900/40">
+                    {filteredCatalogMovies.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-12 text-center text-gray-500 text-xs">
+                          Nenhum título corresponde aos filtros de pesquisa selecionados.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredCatalogMovies.map((movie) => (
+                        <tr key={movie.id} className="hover:bg-gray-900/10 transition-colors">
+                        {/* Poster */}
+                        <td className="py-3 px-4">
+                          <img 
+                            src={movie.posterUrl} 
+                            alt={movie.title}
+                            className="w-10 h-14 object-cover rounded-lg border border-gray-900 shadow-md"
+                            referrerPolicy="no-referrer"
+                          />
+                        </td>
+                        
+                        {/* Title and year */}
+                        <td className="py-3 px-4">
+                          <div className="font-bold text-gray-100 text-sm">{movie.title}</div>
+                          <div className="text-gray-500 mt-0.5">{movie.originalTitle || movie.title} • {movie.year} • {movie.duration}</div>
+                        </td>
+
+                        {/* Type Badge */}
+                        <td className="py-3 px-4">
+                          <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                            movie.type === "filme" 
+                              ? "bg-blue-950/40 border border-blue-900/30 text-blue-400"
+                              : movie.type === "serie"
+                                ? "bg-red-950/40 border border-red-900/30 text-red-400"
+                                : "bg-amber-950/40 border border-amber-900/30 text-amber-400"
+                          }`}>
+                            {movie.type}
+                          </span>
+                        </td>
+
+                        {/* Genres */}
+                        <td className="py-3 px-4 max-w-[200px] truncate">
+                          <div className="flex flex-wrap gap-1">
+                            {movie.genres.map((g, idx) => (
+                              <span key={idx} className="bg-gray-950 text-gray-400 px-1.5 py-0.5 rounded text-[10px]">
+                                {g}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+
+                        {/* Rating */}
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-1">
+                            <span className="text-amber-400 font-bold font-mono">★</span>
+                            <span className="font-mono font-bold text-gray-200">{movie.rating.toFixed(1)}</span>
+                          </div>
+                        </td>
+
+                        {/* Featured */}
+                        <td className="py-3 px-4">
+                          <button
+                            onClick={() => handleToggleFeatured(movie)}
+                            className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all cursor-pointer flex items-center gap-1 ${
+                              movie.featured
+                                ? "bg-red-950/40 border-red-900/40 text-red-400 hover:bg-red-900/60 hover:text-white"
+                                : "bg-gray-950 border-gray-900 text-gray-500 hover:text-gray-300 hover:border-gray-800"
+                            }`}
+                            title={movie.featured ? "Remover de Lançamentos" : "Marcar como Lançamento"}
+                          >
+                            <Sparkle className={`w-3 h-3 ${movie.featured ? "text-red-400 fill-red-400 animate-pulse" : "text-gray-600"}`} />
+                            <span>{movie.featured ? "Lançamento" : "+ Lançamento"}</span>
+                          </button>
+                        </td>
+
+                        {/* Actions */}
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => handleOpenEdit(movie)}
+                              className="p-1.5 rounded-lg bg-gray-950 border border-gray-900 hover:border-red-600/30 hover:bg-gray-900 text-gray-300 hover:text-white transition-all cursor-pointer"
+                              title="Editar Título"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteMovie(movie.id, movie.title)}
+                              className="p-1.5 rounded-lg bg-red-950/10 border border-red-950/20 hover:border-red-600/50 hover:bg-red-950/30 text-red-400 hover:text-red-300 transition-all cursor-pointer"
+                              title="Excluir Título"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+
+
+        {/* VIEW 2: USER MANAGEMENT */}
+        {activeSubTab === "users" && (
+          <div>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+              <h2 className="text-lg font-bold flex items-center gap-2 text-gray-200">
+                <Users className="w-5 h-5 text-brand-primary" />
+                <span>Gerenciar Usuários Registrados ({filteredUsers.length})</span>
+              </h2>
+
+              {/* User search bar */}
+              <div className="relative w-full sm:w-64">
+                <Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={userSearchTerm}
+                  onChange={(e) => setUserSearchTerm(e.target.value)}
+                  placeholder="Buscar por nome ou e-mail..."
+                  className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-xs pl-9 pr-3 py-2 rounded-xl transition-all"
+                />
+              </div>
+            </div>
+
+            {usersLoading ? (
+              <div className="flex items-center justify-center p-12">
+                <Loader2 className="w-8 h-8 text-brand-primary animate-spin" />
+              </div>
+            ) : filteredUsers.length === 0 ? (
+              <div className="bg-[#0c0c0c] border border-gray-900 rounded-2xl p-8 text-center text-gray-500 text-xs">
+                Nenhum usuário encontrado para a busca "{userSearchTerm}".
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Desktop Table View */}
+                <div className="hidden md:block bg-[#0c0c0c] border border-gray-950 rounded-2xl overflow-hidden shadow-xl">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-gray-300">
+                      <thead className="bg-[#121212] text-gray-400 border-b border-gray-900/60 uppercase text-[10px] tracking-wider font-bold">
+                        <tr>
+                          <th className="py-3.5 px-4">Nome</th>
+                          <th className="py-3.5 px-4">E-mail</th>
+                          <th className="py-3.5 px-4">Nível de Acesso</th>
+                          <th className="py-3.5 px-4 text-right">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-900/40">
+                        {filteredUsers.map((u: any) => (
+                          <tr key={u.id} className="hover:bg-gray-900/10 transition-colors">
+                            <td className="py-3 px-4 font-bold text-gray-100">{u.name}</td>
+                            <td className="py-3 px-4 text-gray-400 font-mono">{u.email}</td>
+                            <td className="py-3 px-4">
+                              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                                u.role === "admin"
+                                  ? "bg-red-950/40 border border-red-900/30 text-red-400"
+                                  : "bg-gray-950 border border-gray-900 text-gray-400"
+                              }`}>
+                                <Shield className="w-2.5 h-2.5" />
+                                {u.role === "admin" ? "Administrador" : "Usuário Comum"}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  onClick={() => handleToggleUserRole(u.id, u.role, u.name)}
+                                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all cursor-pointer ${
+                                    u.role === "admin"
+                                      ? "bg-gray-950 border-gray-900 text-gray-400 hover:text-white"
+                                      : "bg-red-950/20 border-red-900/30 text-red-400 hover:bg-red-900 hover:text-white"
+                                  }`}
+                                  disabled={u.id === "admin-default"}
+                                >
+                                  {u.role === "admin" ? "Remover Admin" : "Tornar Admin"}
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteUser(u.id, u.name)}
+                                  className="px-3 py-1.5 rounded-lg bg-red-950/20 border border-red-900/40 hover:border-red-600 hover:bg-red-900/40 text-red-400 hover:text-white text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1"
+                                  disabled={u.id === "admin-default" || u.id === currentUser?.id}
+                                  title="Excluir Usuário"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Excluir</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Mobile Cards View */}
+                <div className="grid grid-cols-1 gap-3 md:hidden">
+                  {filteredUsers.map((u: any) => (
+                    <div 
+                      key={u.id}
+                      className="bg-[#0c0c0c] border border-gray-900 p-4 rounded-2xl shadow-lg space-y-3"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <h4 className="font-bold text-white text-sm">{u.name}</h4>
+                          <p className="text-xs text-gray-400 font-mono">{u.email}</p>
+                        </div>
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0 ${
+                          u.role === "admin"
+                            ? "bg-red-950/40 border border-red-900/30 text-red-400"
+                            : "bg-gray-950 border border-gray-900 text-gray-400"
+                        }`}>
+                          <Shield className="w-2.5 h-2.5" />
+                          {u.role === "admin" ? "Admin" : "Comum"}
+                        </span>
+                      </div>
+
+                      <div className="pt-2 border-t border-gray-900/60 flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => handleToggleUserRole(u.id, u.role, u.name)}
+                          className={`flex-1 text-[11px] font-bold py-2 px-3 rounded-xl border transition-all text-center cursor-pointer ${
+                            u.role === "admin"
+                              ? "bg-gray-950 border-gray-900 text-gray-400 hover:text-white"
+                              : "bg-red-950/20 border-red-900/30 text-red-400 hover:bg-red-900 hover:text-white"
+                          }`}
+                          disabled={u.id === "admin-default"}
+                        >
+                          {u.role === "admin" ? "Remover Admin" : "Tornar Admin"}
+                        </button>
+                        
+                        <button
+                          onClick={() => handleDeleteUser(u.id, u.name)}
+                          className="flex-1 bg-red-950/20 border border-red-900/40 hover:bg-red-900/40 text-red-400 hover:text-white text-[11px] font-bold py-2 px-3 rounded-xl transition-all text-center cursor-pointer flex items-center justify-center gap-1.5"
+                          disabled={u.id === "admin-default" || u.id === currentUser?.id}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Excluir Usuário</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* VIEW: REPORTS & DENÚNCIAS */}
+        {activeSubTab === "reports" && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#0c0c0c] border border-gray-900 p-5 rounded-2xl">
+              <div>
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Flag className="w-5 h-5 text-amber-400" />
+                  <span>Central de Denúncias e Relatórios de Erro</span>
+                </h3>
+                <p className="text-xs text-gray-400 mt-1">
+                  Gerencie notificações enviadas pelos usuários sobre falhas de player, episódios ou capas.
+                </p>
+              </div>
+
+              {/* Status Filter */}
+              <div className="flex items-center gap-2 bg-black border border-gray-800 p-1.5 rounded-xl">
+                {(["todos", "Pendente", "Em Análise", "Resolvido"] as const).map((filterOpt) => (
+                  <button
+                    key={filterOpt}
+                    onClick={() => setReportsFilter(filterOpt)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer capitalize ${
+                      reportsFilter === filterOpt
+                        ? "bg-brand-primary text-white"
+                        : "text-gray-400 hover:text-white"
+                    }`}
+                  >
+                    {filterOpt}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {reportsLoading ? (
+              <div className="p-12 text-center text-xs text-gray-500">
+                <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-brand-primary" />
+                Carregando relatórios de usuários...
+              </div>
+            ) : reports.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {reports
+                  .filter((r) => reportsFilter === "todos" || r.status === reportsFilter)
+                  .map((report) => (
+                    <div
+                      key={report.id}
+                      className="bg-[#0c0c0c] border border-gray-900 hover:border-gray-800 p-5 rounded-2xl shadow-xl flex flex-col justify-between space-y-4"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <span className="text-xs font-mono font-bold text-amber-400 block uppercase tracking-wider">
+                              {report.reason}
+                            </span>
+                            <h4 className="font-extrabold text-white text-base mt-0.5">
+                              {report.movieTitle || "Problema Geral no Site"}
+                            </h4>
+                          </div>
+
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border uppercase tracking-wider shrink-0 ${
+                            report.status === "Resolvido"
+                              ? "bg-emerald-950/40 border-emerald-800 text-emerald-400"
+                              : report.status === "Em Análise"
+                              ? "bg-blue-950/40 border-blue-800 text-blue-400"
+                              : "bg-amber-950/40 border-amber-800 text-amber-400 animate-pulse"
+                          }`}>
+                            {report.status}
+                          </span>
+                        </div>
+
+                        <div className="bg-black/80 border border-gray-900/80 p-3.5 rounded-xl text-xs text-gray-200 leading-relaxed">
+                          {report.description}
+                        </div>
+
+                        <div className="text-[11px] text-gray-400 pt-1 flex flex-wrap items-center justify-between gap-2 border-t border-gray-900">
+                          <div>
+                            Enviado por: <strong className="text-gray-200">{report.userName}</strong> ({report.userEmail})
+                          </div>
+                          <div className="text-gray-500 text-[10px]">
+                            {new Date(report.createdAt).toLocaleDateString("pt-BR")} às {new Date(report.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action Controls */}
+                      <div className="flex items-center gap-2 pt-2 border-t border-gray-900">
+                        <button
+                          onClick={() => handleUpdateReportStatus(report.id, "Resolvido")}
+                          disabled={report.status === "Resolvido"}
+                          className="flex-1 bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-400 disabled:opacity-40 text-xs font-bold py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Marcar Resolvido</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleUpdateReportStatus(report.id, "Em Análise")}
+                          disabled={report.status === "Em Análise"}
+                          className="flex-1 bg-blue-950/40 hover:bg-blue-900/60 border border-blue-800/60 text-blue-400 disabled:opacity-40 text-xs font-bold py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <Clock className="w-3.5 h-3.5" />
+                          <span>Em Análise</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleDeleteReport(report.id)}
+                          className="bg-red-950/20 hover:bg-red-900/40 border border-red-900/40 text-red-400 p-2 rounded-xl transition-all cursor-pointer"
+                          title="Excluir Denúncia"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            ) : (
+              <div className="p-16 text-center bg-[#0c0c0c] border border-gray-900 rounded-3xl space-y-3">
+                <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />
+                <h4 className="font-bold text-white text-base">Nenhuma denúncia encontrada</h4>
+                <p className="text-xs text-gray-400">Não há relatórios de erro pendentes nesta categoria.</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* VIEW 3: SITE STATS METRICS */}
+        {activeSubTab === "stats" && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+            {/* Stat 1 */}
+            <div className="bg-[#0c0c0c] border border-gray-900 p-5 rounded-2xl flex items-center justify-between shadow-xl">
+              <div>
+                <span className="text-xs text-gray-500 font-bold uppercase tracking-wider block">Total de Filmes</span>
+                <span className="text-3xl font-display font-black text-white mt-1 block">{totalMovies}</span>
+              </div>
+              <div className="p-3 bg-blue-950/30 rounded-xl text-blue-400">
+                <Film className="w-6 h-6" />
+              </div>
+            </div>
+
+            {/* Stat 2 */}
+            <div className="bg-[#0c0c0c] border border-gray-900 p-5 rounded-2xl flex items-center justify-between shadow-xl">
+              <div>
+                <span className="text-xs text-gray-500 font-bold uppercase tracking-wider block">Total de Séries</span>
+                <span className="text-3xl font-display font-black text-white mt-1 block">{totalSeries}</span>
+              </div>
+              <div className="p-3 bg-red-950/30 rounded-xl text-red-400">
+                <Tv className="w-6 h-6" />
+              </div>
+            </div>
+
+            {/* Stat 3 */}
+            <div className="bg-[#0c0c0c] border border-gray-900 p-5 rounded-2xl flex items-center justify-between shadow-xl">
+              <div>
+                <span className="text-xs text-gray-500 font-bold uppercase tracking-wider block">Total de Animes</span>
+                <span className="text-3xl font-display font-black text-white mt-1 block">{totalAnimes}</span>
+              </div>
+              <div className="p-3 bg-amber-950/30 rounded-xl text-amber-400">
+                <Sparkles className="w-6 h-6" />
+              </div>
+            </div>
+
+            {/* Stat 4 */}
+            <div className="bg-[#0c0c0c] border border-gray-900 p-5 rounded-2xl flex items-center justify-between shadow-xl">
+              <div>
+                <span className="text-xs text-gray-500 font-bold uppercase tracking-wider block">Títulos em Destaque</span>
+                <span className="text-3xl font-display font-black text-rose-500 mt-1 block">{featuredTitles}</span>
+              </div>
+              <div className="p-3 bg-rose-950/30 rounded-xl text-rose-400">
+                <Sparkle className="w-6 h-6" />
+              </div>
+            </div>
+
+            {/* Visual Charts Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:col-span-2 lg:col-span-4 mt-2">
+              
+              {/* Chart 1: Genres Bar Chart */}
+              <div className="bg-[#0c0c0c] border border-gray-900/60 p-5 rounded-3xl shadow-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold text-gray-200 flex items-center gap-2">
+                    <Film className="w-4 h-4 text-brand-primary" />
+                    <span>Top 8 Gêneros no Catálogo</span>
+                  </h3>
+                  <span className="text-[10px] text-gray-500 font-mono">Qtd de Títulos</span>
+                </div>
+                <div className="h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={genreData} layout="vertical" margin={{ left: 10, right: 10, top: 5, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#161616" horizontal={false} />
+                      <XAxis type="number" stroke="#4b5563" fontSize={10} tickLine={false} />
+                      <YAxis dataKey="name" type="category" stroke="#4b5563" fontSize={10} tickLine={false} width={80} />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: "#060606", borderColor: "#1f2937", borderRadius: "12px", fontSize: "11px" }}
+                        labelStyle={{ fontWeight: "bold", color: "#ffffff" }}
+                      />
+                      <Bar dataKey="value" fill="#e50914" radius={[0, 4, 4, 0]} barSize={14}>
+                        {genreData.map((_, index) => (
+                          <Cell key={`cell-${index}`} fill={index === 0 ? "#e50914" : "#b91c1c"} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Chart 2: Type Distribution Donut Chart */}
+              <div className="bg-[#0c0c0c] border border-gray-900/60 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-bold text-gray-200 flex items-center gap-2">
+                      <Tv className="w-4 h-4 text-red-400" />
+                      <span>Distribuição por Tipo de Mídia</span>
+                    </h3>
+                    <span className="text-[10px] text-gray-500 font-mono">Filme / Série / Anime</span>
+                  </div>
+                  <div className="h-48 w-full flex items-center justify-center relative">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={typeData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={55}
+                          outerRadius={75}
+                          paddingAngle={5}
+                          dataKey="value"
+                        >
+                          {typeData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          contentStyle={{ backgroundColor: "#060606", borderColor: "#1f2937", borderRadius: "12px", fontSize: "11px" }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                      <span className="text-2xl font-black text-white">{movies.length}</span>
+                      <span className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Títulos</span>
+                    </div>
+                  </div>
+                </div>
+                {/* Custom Legend */}
+                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-gray-900/60 text-center">
+                  {typeData.map((t, idx) => (
+                    <div key={idx} className="flex flex-col items-center">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: t.color }} />
+                        <span className="text-xs text-gray-300 font-medium">{t.name}</span>
+                      </div>
+                      <span className="text-sm font-bold text-white font-mono mt-0.5">{t.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Chart 3: Rating Distribution Area Chart */}
+              <div className="bg-[#0c0c0c] border border-gray-900/60 p-5 rounded-3xl shadow-xl lg:col-span-2">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold text-gray-200 flex items-center gap-2">
+                    <Star className="w-4 h-4 text-amber-400" />
+                    <span>Distribuição de Avaliações</span>
+                  </h3>
+                  <span className="text-[10px] text-gray-500 font-mono">Frequência de Notas</span>
+                </div>
+                <div className="h-56 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={ratingDistribution} margin={{ left: -10, right: 10, top: 10, bottom: 5 }}>
+                      <defs>
+                        <linearGradient id="colorRating" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#161616" vertical={false} />
+                      <XAxis dataKey="name" stroke="#4b5563" fontSize={10} tickLine={false} />
+                      <YAxis stroke="#4b5563" fontSize={10} tickLine={false} />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: "#060606", borderColor: "#1f2937", borderRadius: "12px", fontSize: "11px" }}
+                        labelStyle={{ fontWeight: "bold", color: "#ffffff" }}
+                      />
+                      <Area type="monotone" dataKey="value" stroke="#f59e0b" strokeWidth={2} fillOpacity={1} fill="url(#colorRating)" name="Títulos" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+            </div>
+            
+            {/* Database & Workspace Health Card */}
+            <div className="bg-[#0c0c0c] border border-gray-900 p-6 rounded-3xl md:col-span-2 lg:col-span-4 mt-4 shadow-xl">
+              <h3 className="text-base font-bold text-gray-200 mb-4 flex items-center gap-2">
+                <Database className="w-5 h-5 text-brand-primary" />
+                <span>Infraestrutura do PipocaMax</span>
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-gray-400">
+                <div className="space-y-2">
+                  <div className="flex justify-between border-b border-gray-950 pb-2">
+                    <span>Estado do Banco de Dados</span>
+                    <span className="text-emerald-400 font-semibold uppercase flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                      Conectado & Sincronizado
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-b border-gray-950 pb-2">
+                    <span>Espaço em Cache local</span>
+                    <span className="text-white font-mono font-semibold">100% Livre (Persistência Dupla)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Engine de Recomendação IA</span>
+                    <span className="text-white font-semibold flex items-center gap-1 text-red-400">
+                      Gemini 3.5 Flash (Disponível)
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-[#121212]/30 p-4 border border-gray-950 rounded-2xl flex flex-col justify-between">
+                  <p className="leading-relaxed mb-3">
+                    O painel de controle sincroniza diretamente com seu banco de dados na nuvem (Firebase / Firestore). Caso nenhuma credencial esteja carregada no ambiente, o sistema utiliza o <strong>Mecanismo de Cache de Memória In-Memory</strong> para simular salvamentos e exclusões perfeitamente.
+                  </p>
+                  <p className="text-[10px] text-gray-500">Desenvolvido com o PipocaMax Engine v2.0</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 4: SETTINGS SUB-TAB */}
+        {activeSubTab === "settings" && (
+          <div className="max-w-xl mx-auto bg-[#0c0c0c] border border-gray-900 p-6 rounded-3xl shadow-xl">
+            <h3 className="text-lg font-bold text-gray-200 mb-2 flex items-center gap-2">
+              <Settings className="w-5 h-5 text-brand-primary" />
+              <span>Configurações PipocaMax</span>
+            </h3>
+            <p className="text-xs text-gray-400 mb-6 leading-relaxed font-sans">
+              Configure chaves de integração externas para turbinar seu catálogo de mídia.
+            </p>
+
+            <div className="space-y-5 font-sans">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                    TMDB API Key (v3)
+                  </label>
+                  <a 
+                    href="https://www.themoviedb.org/settings/api" 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className="text-[11px] text-emerald-400 hover:underline font-medium"
+                  >
+                    Obter Chave Grátis no TMDB →
+                  </a>
+                </div>
+
+                <div className="relative">
+                  <input
+                    type={showApiKey ? "text" : "password"}
+                    placeholder="Cole sua chave da API do TMDB aqui..."
+                    value={tmdbApiKey}
+                    onChange={(e) => setTmdbApiKey(e.target.value)}
+                    className="w-full bg-black border border-gray-800 focus:border-emerald-500 focus:outline-none text-white text-sm py-2.5 pl-4 pr-10 rounded-xl transition-all font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    className="absolute right-3 top-3 text-gray-500 hover:text-gray-300 cursor-pointer"
+                    title={showApiKey ? "Ocultar chave" : "Mostrar chave"}
+                  >
+                    {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+
+                <p className="text-[10px] text-gray-500 mt-1.5 leading-normal">
+                  Esta chave é utilizada para buscar e importar títulos, pôsteres, sinopses, trailers e elencos em lote. Ao salvar abaixo, a chave ficará gravada no seu banco de dados e no navegador.
+                </p>
+              </div>
+
+              {/* Status Indicator */}
+              <div className="flex items-center gap-2 py-1 text-xs">
+                <span className="text-gray-400">Status atual da Chave:</span>
+                {tmdbApiKey ? (
+                  <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                    <Check className="w-3.5 h-3.5" />
+                    Configurada
+                  </span>
+                ) : (
+                  <span className="text-amber-500 font-semibold flex items-center gap-1">
+                    <X className="w-3.5 h-3.5" />
+                    Não configurada
+                  </span>
+                )}
+              </div>
+
+              {/* Error and Success feedback */}
+              {settingsFeedback.error && (
+                <div className="p-3 bg-red-950/20 border border-red-900/30 text-red-400 text-xs rounded-xl flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>{settingsFeedback.error}</span>
+                </div>
+              )}
+
+              {settingsFeedback.success && (
+                <div className="p-3 bg-[#00d573]/10 border border-[#00d573]/20 text-[#00d573] text-xs rounded-xl flex items-center gap-2">
+                  <Check className="w-4 h-4" />
+                  <span>{settingsFeedback.success}</span>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleSaveSettingsToDb}
+                disabled={savingSettings}
+                className="w-full bg-brand-primary hover:bg-brand-secondary disabled:bg-gray-800 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-red-600/10 hover:scale-101 mt-2"
+              >
+                {savingSettings ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Salvando no Banco...</span>
+                  </>
+                ) : (
+                  <>
+                    <Database className="w-4 h-4" />
+                    <span>Salvar no Banco de Dados</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+      </div>
+
+      {/* FORM MODAL: ADD / EDIT TITLE */}
+      <AnimatePresence>
+        {isFormOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <div 
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm cursor-pointer" 
+              onClick={() => setIsFormOpen(false)}
+            />
+
+            {/* Modal Body */}
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ type: "spring", duration: 0.4 }}
+              className="relative w-full max-w-2xl bg-[#0f0f0f] border border-gray-900 rounded-3xl overflow-hidden shadow-2xl z-10 p-6 md:p-8 max-h-[90vh] overflow-y-auto"
+              id="title-form-box"
+            >
+              {/* Close button */}
+              <button 
+                onClick={() => setIsFormOpen(false)}
+                className="absolute top-4 right-4 text-gray-500 hover:text-white transition-colors cursor-pointer p-1.5 rounded-full hover:bg-gray-900"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <h2 className="text-xl font-display font-black text-white mb-2 flex items-center gap-2">
+                <Plus className="w-5 h-5 text-brand-primary" />
+                <span>{editingMovie ? `Editar: ${editingMovie.title}` : "Cadastrar Novo Título"}</span>
+              </h2>
+              <p className="text-xs text-gray-400 mb-6">
+                Preencha as informações técnicas do filme, série ou anime para atualizar o catálogo do PipocaMax.
+              </p>
+
+              {/* Error and Success states */}
+              {formError && (
+                <div className="mb-4 bg-red-950/20 border border-red-900/30 text-red-400 text-xs p-3.5 rounded-xl flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <p>{formError}</p>
+                </div>
+              )}
+
+              {formSuccess && (
+                <div className="mb-4 bg-emerald-950/20 border border-emerald-900/30 text-emerald-400 text-xs p-3.5 rounded-xl flex items-center gap-2">
+                  <Check className="w-4 h-4" />
+                  <p>{formSuccess}</p>
+                </div>
+              )}
+
+              {/* Form elements */}
+              <form onSubmit={handleFormSubmit} className="space-y-5" id="form-title-editor">
+                
+                {/* Line 1: Title & Original Title */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-gray-400 font-bold uppercase tracking-wider block">Título em Português</label>
+                    <input 
+                      type="text" 
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      placeholder="Ex: Interestelar"
+                      required
+                      className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-gray-400 font-bold uppercase tracking-wider block">Título Original (Inglês/Japão)</label>
+                    <input 
+                      type="text" 
+                      value={originalTitle}
+                      onChange={(e) => setOriginalTitle(e.target.value)}
+                      placeholder="Ex: Interstellar"
+                      className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all"
+                    />
+                  </div>
+                </div>
+
+                {/* Line 2: Type, Year, Duration, Rating */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-gray-400 font-bold uppercase tracking-wider block">Tipo de Título</label>
+                    <select
+                      value={type}
+                      onChange={(e) => setType(e.target.value as any)}
+                      className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-2.5 rounded-xl transition-all cursor-pointer"
+                    >
+                      <option value="filme">Filme</option>
+                      <option value="serie">Série</option>
+                      <option value="anime">Anime</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-gray-400 font-bold uppercase tracking-wider block">Ano de Lançamento</label>
+                    <input 
+                      type="number" 
+                      value={year}
+                      onChange={(e) => setYear(Number(e.target.value))}
+                      required
+                      min={1900}
+                      max={2100}
+                      className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-gray-400 font-bold uppercase tracking-wider block">Duração (Temp/Min)</label>
+                    <input 
+                      type="text" 
+                      value={duration}
+                      onChange={(e) => setDuration(e.target.value)}
+                      placeholder="Ex: 2h 49min ou 4 Temporadas"
+                      required
+                      className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-gray-400 font-bold uppercase tracking-wider block">Nota de Avaliação (★)</label>
+                    <input 
+                      type="number" 
+                      step="0.1"
+                      min="1.0"
+                      max="10.0"
+                      value={rating}
+                      onChange={(e) => setRating(Number(e.target.value))}
+                      required
+                      className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all font-mono"
+                    />
+                  </div>
+                </div>
+
+                {/* Line 3: Genres & Director & IMDB */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-1 md:col-span-2">
+                    <label className="text-[11px] text-gray-400 font-bold uppercase tracking-wider block">Gêneros (Separados por vírgula)</label>
+                    <input 
+                      type="text" 
+                      value={genres}
+                      onChange={(e) => setGenres(e.target.value)}
+                      placeholder="Ex: Ficção Científica, Aventura, Drama"
+                      required
+                      className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-gray-400 font-bold uppercase tracking-wider block">IMDB ID (Opcional)</label>
+                    <input 
+                      type="text" 
+                      value={imdbId}
+                      onChange={(e) => setImdbId(e.target.value)}
+                      placeholder="Ex: tt0816692"
+                      className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all font-mono"
+                    />
+                  </div>
+                </div>
+
+                {/* Director and Cast */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-gray-400 font-bold uppercase tracking-wider block">Diretor / Criador</label>
+                    <input 
+                      type="text" 
+                      value={director}
+                      onChange={(e) => setDirector(e.target.value)}
+                      placeholder="Ex: Christopher Nolan"
+                      className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-gray-400 font-bold uppercase tracking-wider block">Elenco Principal (Separados por vírgula)</label>
+                    <input 
+                      type="text" 
+                      value={cast}
+                      onChange={(e) => setCast(e.target.value)}
+                      placeholder="Ex: Matthew McConaughey, Anne Hathaway"
+                      className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all"
+                    />
+                  </div>
+                </div>
+
+                {/* Media Links: Poster & Backdrop & YouTube Trailer */}
+                <div className="space-y-3 bg-black/30 border border-gray-950 p-4 rounded-2xl">
+                  <span className="text-[11px] text-gray-300 font-extrabold uppercase tracking-wider block border-b border-gray-900 pb-2 mb-2">Imagens e Vídeo Trailer</span>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">URL Imagem do Poster (Vertical)</label>
+                      <input 
+                        type="url" 
+                        value={posterUrl}
+                        onChange={(e) => setPosterUrl(e.target.value)}
+                        placeholder="https://images.unsplash.com/..."
+                        required
+                        className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">URL Imagem de Fundo (Horizontal Banner)</label>
+                      <input 
+                        type="url" 
+                        value={backdropUrl}
+                        onChange={(e) => setBackdropUrl(e.target.value)}
+                        placeholder="https://images.unsplash.com/..."
+                        required
+                        className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">ID do Vídeo de Trailer (YouTube ID apenas)</label>
+                    <input 
+                      type="text" 
+                      value={trailerVideoId}
+                      onChange={(e) => setTrailerVideoId(e.target.value)}
+                      placeholder="Ex: dQw4w9WgXcQ (Apenas o código após 'v=')"
+                      required
+                      className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all font-mono"
+                    />
+                  </div>
+                </div>
+
+                {/* Synopsis */}
+                <div className="space-y-1">
+                  <label className="text-[11px] text-gray-400 font-bold uppercase tracking-wider block">Sinopse da História</label>
+                  <textarea 
+                    value={synopsis}
+                    onChange={(e) => setSynopsis(e.target.value)}
+                    placeholder="Escreva um breve resumo cativante sobre a história..."
+                    required
+                    rows={3}
+                    className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all resize-none"
+                  />
+                </div>
+
+                {/* Featured Checkbox */}
+                <div className="flex items-center gap-2 bg-black/20 p-3 rounded-xl border border-gray-900 w-max">
+                  <input 
+                    type="checkbox" 
+                    id="featured-checkbox" 
+                    checked={featured}
+                    onChange={(e) => setFeatured(e.target.checked)}
+                    className="w-4 h-4 text-red-600 accent-red-600 bg-black border-gray-900 rounded focus:ring-red-500 cursor-pointer"
+                  />
+                  <label htmlFor="featured-checkbox" className="text-xs font-bold text-gray-300 cursor-pointer select-none">
+                    Destacar este título no Carrossel da página inicial
+                  </label>
+                </div>
+
+                {/* Actions button */}
+                <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-950">
+                  <button
+                    type="button"
+                    onClick={() => setIsFormOpen(false)}
+                    className="px-5 py-2.5 rounded-xl border border-gray-900 text-gray-400 hover:text-white hover:bg-gray-900 text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={formSubmitting}
+                    className="bg-brand-primary hover:bg-brand-secondary disabled:bg-gray-800 text-white text-xs font-bold px-6 py-2.5 rounded-xl transition-all shadow-md shadow-red-600/15 cursor-pointer flex items-center gap-1"
+                  >
+                    {formSubmitting ? "Salvando..." : (
+                      <>
+                        <Check className="w-4 h-4" />
+                        <span>Salvar Alterações</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* TMDB SEARCH & IMPORT MODAL */}
+      <AnimatePresence>
+        {isTmdbSearchOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
+            {/* Backdrop */}
+            <div 
+              className="absolute inset-0 bg-black/90 backdrop-blur-md cursor-pointer" 
+              onClick={() => setIsTmdbSearchOpen(false)}
+            />
+
+            {/* Modal Body */}
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.96, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 15 }}
+              className="relative w-full max-w-5xl bg-[#0a0a0a] border border-gray-800 rounded-3xl overflow-hidden shadow-2xl z-10 p-4 sm:p-6 md:p-8 max-h-[92vh] flex flex-col text-left"
+            >
+              {/* Close button */}
+              <button 
+                onClick={() => setIsTmdbSearchOpen(false)}
+                className="absolute top-3.5 right-3.5 sm:top-4 sm:right-4 text-gray-500 hover:text-white transition-colors cursor-pointer p-2 rounded-full hover:bg-gray-900 z-20"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              {/* Modal Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3 pr-8 shrink-0">
+                <div>
+                  <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold uppercase tracking-wider mb-0.5">
+                    <Sparkles className="w-4 h-4 animate-pulse" />
+                    <span>Catálogo Oficial TMDB (v3 API)</span>
+                  </div>
+                  <h3 className="font-display font-black text-lg sm:text-2xl text-white">
+                    Importar Filmes, Séries & Animes
+                  </h3>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {tmdbApiKey ? (
+                    <span className="text-[11px] sm:text-xs text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl font-bold flex items-center gap-1.5">
+                      <Check className="w-3.5 h-3.5" />
+                      <span>API TMDB Conectada</span>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setIsTmdbSearchOpen(false);
+                        setActiveSubTab("settings");
+                      }}
+                      className="text-[11px] sm:text-xs text-amber-400 bg-amber-950/60 border border-amber-800/60 hover:bg-amber-900/60 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      <span>Configurar API em Configurações →</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Modal Scrollable Body */}
+              <div className="flex-1 overflow-y-auto pr-1 no-scrollbar space-y-4">
+
+                {/* API Missing Warning Banner */}
+                {!tmdbApiKey && (
+                  <div className="bg-amber-950/30 border border-amber-800/60 p-3.5 sm:p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-3">
+                      <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+                      <span className="text-amber-200 text-left">
+                        A chave da API do TMDB não está configurada. Vá para a aba <strong>Configurações</strong> para informar sua chave.
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setIsTmdbSearchOpen(false);
+                        setActiveSubTab("settings");
+                      }}
+                      className="w-full sm:w-auto bg-amber-500 hover:bg-amber-400 text-black font-bold px-4 py-2 rounded-xl shrink-0 cursor-pointer text-xs"
+                    >
+                      Ir para Configurações
+                    </button>
+                  </div>
+                )}
+
+                {/* Mode Tabs: Manual Search vs Automatic Batch Import */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border-b border-gray-800 pb-3">
+                  <button
+                    type="button"
+                    onClick={() => setImportTab("search")}
+                    className={`flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      importTab === "search"
+                        ? "bg-emerald-500 text-black shadow-lg shadow-emerald-500/20 font-black"
+                        : "bg-gray-900 text-gray-400 hover:text-white border border-gray-800"
+                    }`}
+                  >
+                    <Search className="w-4 h-4" />
+                    <span>Busca & Seleção Manual</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setImportTab("batch")}
+                    className={`flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      importTab === "batch"
+                        ? "bg-emerald-500 text-black shadow-lg shadow-emerald-500/20 font-black"
+                        : "bg-gray-900 text-gray-400 hover:text-white border border-gray-800"
+                    }`}
+                  >
+                    <Zap className="w-4 h-4 text-amber-400 animate-pulse fill-amber-400" />
+                    <span>Importação Automática em Lote</span>
+                    <span className="text-[9px] bg-amber-400/20 text-amber-300 font-mono px-1.5 py-0.5 rounded uppercase font-extrabold">
+                      Lote
+                    </span>
+                  </button>
+                </div>
+
+                {/* BATCH AUTO-IMPORT INTERFACE */}
+                {importTab === "batch" && (
+                  <div className="bg-[#121212] border border-gray-800 p-4 sm:p-5 rounded-2xl space-y-4 sm:space-y-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h4 className="font-bold text-sm text-white flex items-center gap-2">
+                          <Zap className="w-4 h-4 text-amber-400 fill-amber-400" />
+                          <span>Importação Automática em Lote do TMDB</span>
+                        </h4>
+                        <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+                          Defina quantos títulos deseja adicionar de uma vez. O PipocaMax irá pesquisar no TMDB e cadastrar automaticamente os novos títulos com pôsteres, sinopses, elencos e trailers.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Batch Controls Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 items-end">
+                      {/* Target count input + presets */}
+                      <div className="md:col-span-6 space-y-1.5">
+                        <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+                          Quantos Títulos Adicionar de Vez?
+                        </label>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={batchTargetCount}
+                            onChange={(e) => setBatchTargetCount(Math.max(1, parseInt(e.target.value) || 1))}
+                            className="w-20 sm:w-24 bg-black border border-gray-800 rounded-xl px-3 py-2 text-sm text-center font-bold text-emerald-400 font-mono focus:outline-none focus:border-emerald-500 shrink-0"
+                            disabled={batchRunning}
+                          />
+                          <div className="flex flex-wrap items-center gap-1">
+                            {[5, 10, 20, 50].map((num) => (
+                              <button
+                                key={num}
+                                type="button"
+                                onClick={() => setBatchTargetCount(num)}
+                                disabled={batchRunning}
+                                className={`px-2.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                  batchTargetCount === num
+                                    ? "bg-emerald-500 text-black font-black"
+                                    : "bg-gray-900 border border-gray-800 text-gray-400 hover:text-white"
+                                }`}
+                              >
+                                {num}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Media Type */}
+                      <div className="md:col-span-3 space-y-1.5">
+                        <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+                          Conteúdo
+                        </label>
+                        <select
+                          value={batchType}
+                          onChange={(e: any) => setBatchType(e.target.value)}
+                          disabled={batchRunning}
+                          className="w-full bg-black border border-gray-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer font-bold h-[38px]"
+                        >
+                          <option value="todos">Todos</option>
+                          <option value="filme">Apenas Filmes</option>
+                          <option value="serie">Apenas Séries</option>
+                          <option value="anime">Apenas Animes</option>
+                        </select>
+                      </div>
+
+                      {/* Year */}
+                      <div className="md:col-span-3 space-y-1.5">
+                        <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+                          Ano Lançamento
+                        </label>
+                        <input
+                          type="number"
+                          placeholder="Ex: 2026"
+                          value={batchYear}
+                          onChange={(e) => setBatchYear(e.target.value)}
+                          disabled={batchRunning}
+                          className="w-full bg-black border border-gray-800 rounded-xl px-3 py-2 text-xs text-emerald-400 font-mono font-bold focus:outline-none focus:border-emerald-500 h-[38px]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Batch Start/Stop Button */}
+                    <div className="pt-2">
+                      {batchRunning ? (
+                        <div className="space-y-3 bg-black/60 border border-emerald-900/50 p-3.5 sm:p-4 rounded-xl">
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1 text-xs font-bold text-emerald-400">
+                            <span className="flex items-center gap-2">
+                              <Loader2 className="w-4 h-4 animate-spin text-emerald-400 shrink-0" />
+                              <span>Importando automaticamente em lote...</span>
+                            </span>
+                            <span className="font-mono text-white text-[11px] sm:text-xs">
+                              {batchProgress?.current || 0} / {batchProgress?.total || batchTargetCount} (
+                              {Math.round(((batchProgress?.current || 0) / (batchProgress?.total || 1)) * 100)}%)
+                            </span>
+                          </div>
+
+                          {/* Progress Bar */}
+                          <div className="w-full bg-gray-900 rounded-full h-2.5 overflow-hidden border border-gray-800">
+                            <div
+                              className="bg-emerald-500 h-full transition-all duration-300 ease-out"
+                              style={{
+                                width: `${Math.min(100, Math.round(((batchProgress?.current || 0) / (batchProgress?.total || 1)) * 100))}%`
+                              }}
+                            />
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11px] text-gray-400">
+                            <span className="truncate max-w-full sm:max-w-md font-medium text-white">
+                              🎬 Processando: <span className="text-emerald-300 font-bold">{batchProgress?.currentTitle}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={handleStopBatch}
+                              className="w-full sm:w-auto bg-red-950/80 hover:bg-red-900 border border-red-800 text-red-300 hover:text-white px-3 py-1.5 rounded-lg font-bold text-xs cursor-pointer flex items-center justify-center gap-1 shrink-0"
+                            >
+                              <Square className="w-3 h-3 fill-current" />
+                              <span>Parar Importação</span>
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleRunBatchAutoImport}
+                          disabled={!tmdbApiKey}
+                          className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:bg-gray-800 text-black disabled:text-gray-500 font-extrabold text-sm py-3.5 px-4 rounded-xl transition-all cursor-pointer shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"
+                        >
+                          <Play className="w-4 h-4 fill-current" />
+                          <span>Iniciar Importação Automática de {batchTargetCount} Títulos</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Batch Completion Summary */}
+                    {batchResultSummary && (
+                      <div className="bg-emerald-950/30 border border-emerald-800/60 p-3.5 sm:p-4 rounded-xl text-xs space-y-2">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                          <span className="font-extrabold text-emerald-400 text-sm flex items-center gap-1.5">
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Importação em Lote Concluída!</span>
+                          </span>
+                          <span className="bg-emerald-500 text-black font-black px-2.5 py-0.5 rounded-full font-mono text-[11px]">
+                            +{batchResultSummary.added} Novos Títulos
+                          </span>
+                        </div>
+                        {batchResultSummary.titles.length > 0 && (
+                          <div className="pt-2 border-t border-emerald-900/40">
+                            <span className="text-[10px] text-gray-400 block mb-1 font-bold uppercase">
+                              Títulos Adicionados:
+                            </span>
+                            <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                              {batchResultSummary.titles.map((t, idx) => (
+                                <span key={idx} className="bg-black/80 border border-emerald-800/40 text-emerald-300 text-[10px] px-2 py-0.5 rounded-md">
+                                  {t}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* MANUAL SEARCH INTERFACE */}
+                {importTab === "search" && (
+                  <>
+                    {/* Responsive Search & Filters Toolbar */}
+                    <form 
+                      onSubmit={(e) => handleTmdbSearch(e, 1)} 
+                      className="bg-[#121212] border border-gray-800/80 p-3 rounded-2xl grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center"
+                    >
+                      {/* Search query input */}
+                      <div className="sm:col-span-5 relative">
+                        <Search className="w-4 h-4 text-gray-500 absolute left-3 top-3" />
+                        <input 
+                          type="text"
+                          placeholder="Pesquisar por título (ou deixe vazio)..."
+                          value={tmdbSearchQuery}
+                          onChange={(e) => setTmdbSearchQuery(e.target.value)}
+                          className="w-full bg-black border border-gray-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 font-sans"
+                        />
+                      </div>
+
+                      {/* Year Filter input */}
+                      <div className="sm:col-span-3 flex items-center gap-1.5 bg-black border border-gray-800 rounded-xl px-3 py-1.5">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase">Ano:</span>
+                        <input 
+                          type="number"
+                          placeholder="Ex: 2026"
+                          min={1900}
+                          max={2100}
+                          value={tmdbSearchYear}
+                          onChange={(e) => setTmdbSearchYear(e.target.value)}
+                          className="w-full bg-transparent text-xs font-bold text-emerald-400 focus:outline-none font-mono"
+                        />
+                      </div>
+
+                      {/* Type Filter selector */}
+                      <div className="sm:col-span-2">
+                        <select
+                          value={tmdbSearchType}
+                          onChange={(e: any) => setTmdbSearchType(e.target.value)}
+                          className="w-full bg-black border border-gray-800 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer font-bold"
+                        >
+                          <option value="todos">Todos</option>
+                          <option value="filme">Filmes</option>
+                          <option value="serie">Séries</option>
+                          <option value="anime">Animes</option>
+                        </select>
+                      </div>
+
+                      {/* Submit button */}
+                      <div className="sm:col-span-2">
+                        <button
+                          type="submit"
+                          disabled={tmdbLoading}
+                          className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:bg-gray-800 text-black disabled:text-gray-500 text-xs font-bold py-2 px-3 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                        >
+                          {tmdbLoading ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <>
+                              <Search className="w-3.5 h-3.5" />
+                              <span>Buscar</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </form>
+
+                    {/* Status Header */}
+                    <div className="flex items-center justify-between text-[11px] text-gray-400 px-1 pt-1">
+                      <span>
+                        {tmdbSearchQuery ? (
+                          <>Resultados para "<strong>{tmdbSearchQuery}</strong>"</>
+                        ) : (
+                          <>Lançamentos e Populares {tmdbSearchYear ? `de ${tmdbSearchYear}` : ""}</>
+                        )}
+                        {tmdbTotalResults > 0 && ` (${tmdbTotalResults} encontrados)`}
+                      </span>
+
+                      {tmdbTotalPages > 1 && (
+                        <span className="font-mono text-gray-500">
+                          Página <strong className="text-white">{tmdbPage}</strong> de {tmdbTotalPages}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Grid of Results */}
+                    <div className="min-h-[250px]">
+                      {tmdbLoading ? (
+                        <div className="h-64 flex flex-col items-center justify-center text-gray-400 gap-3">
+                          <Loader2 className="w-8 h-8 text-emerald-500 animate-spin" />
+                          <span className="text-xs">Carregando catálogo do TMDB...</span>
+                        </div>
+                      ) : tmdbSearchResults.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {tmdbSearchResults.map((item) => {
+                            const isAdded = isAlreadyInCatalog(item);
+                            const isDirectImporting = directImportingId === (item.tmdbId || item.id);
+                            const isDetailImporting = importingId === (item.tmdbId || item.id);
+
+                            return (
+                              <div 
+                                key={item.id}
+                                className={`bg-[#111111] border rounded-2xl p-2.5 flex gap-3 transition-all relative overflow-hidden ${
+                                  isAdded ? "border-emerald-900/50 bg-emerald-950/10" : "border-gray-900 hover:border-gray-800"
+                                }`}
+                              >
+                                {/* Poster */}
+                                <img 
+                                  src={item.posterUrl} 
+                                  alt={item.title} 
+                                  className="w-16 h-24 object-cover rounded-xl bg-gray-950 shrink-0 shadow-md"
+                                  referrerPolicy="no-referrer"
+                                />
+
+                                {/* Info */}
+                                <div className="flex flex-col justify-between flex-grow min-w-0 py-0.5">
+                                  <div>
+                                    <div className="flex items-start justify-between gap-1 mb-0.5">
+                                      <h4 className="font-bold text-xs text-white truncate leading-snug" title={item.title}>
+                                        {item.title}
+                                      </h4>
+                                      <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 ${
+                                        item.type === "anime" 
+                                          ? "bg-amber-950 text-amber-400 border border-amber-900/40"
+                                          : item.type === "serie"
+                                          ? "bg-purple-950 text-purple-300 border border-purple-900/40"
+                                          : "bg-red-950 text-red-400 border border-red-900/40"
+                                      }`}>
+                                        {item.type}
+                                      </span>
+                                    </div>
+
+                                    {item.originalTitle && item.originalTitle !== item.title && (
+                                      <p className="text-[10px] text-gray-500 truncate mb-1">
+                                        {item.originalTitle}
+                                      </p>
+                                    )}
+
+                                    <p className="text-[11px] text-gray-400 font-medium">
+                                      📅 {item.year} • <span className="text-amber-400 font-bold">★ {item.rating ? item.rating.toFixed(1) : "0.0"}</span>
+                                    </p>
+                                  </div>
+
+                                  {/* Action Buttons */}
+                                  <div className="pt-2 flex items-center gap-1.5">
+                                    {isAdded ? (
+                                      <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/60 px-2.5 py-1 rounded-lg flex items-center gap-1 w-full justify-center">
+                                        <Check className="w-3 h-3 text-emerald-400" />
+                                        <span>No Catálogo</span>
+                                      </span>
+                                    ) : (
+                                      <>
+                                        <button
+                                          onClick={() => handleDirectImportTmdb(item)}
+                                          disabled={isDirectImporting || isDetailImporting}
+                                          className="flex-grow bg-emerald-500 hover:bg-emerald-400 disabled:bg-gray-800 text-black disabled:text-gray-500 text-[10px] font-bold py-1.2 px-2 rounded-lg cursor-pointer transition-all flex items-center justify-center gap-1"
+                                          title="Importar título diretamente para o banco de dados em 1 clique"
+                                        >
+                                          {isDirectImporting ? (
+                                            <Loader2 className="w-3 h-3 animate-spin text-black" />
+                                          ) : (
+                                            <>
+                                              <Plus className="w-3 h-3" />
+                                              <span>Adicionar</span>
+                                            </>
+                                          )}
+                                        </button>
+
+                                        <button
+                                          onClick={() => handleImportTmdb(item.id, item.type === "filme" ? "filme" : "serie")}
+                                          disabled={isDirectImporting || isDetailImporting}
+                                          className="bg-gray-900 hover:bg-gray-800 text-gray-300 hover:text-white text-[10px] font-bold py-1.2 px-2 rounded-lg cursor-pointer transition-all border border-gray-800"
+                                          title="Abrir no formulário para personalizar antes de salvar"
+                                        >
+                                          {isDetailImporting ? <Loader2 className="w-3 h-3 animate-spin" /> : "Editar"}
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="h-64 flex flex-col items-center justify-center text-gray-500 gap-2">
+                          <Sparkles className="w-8 h-8 text-gray-700 animate-pulse" />
+                          <span className="text-xs font-medium">Nenhum título encontrado para esses filtros.</span>
+                          <button 
+                            onClick={() => {
+                              setTmdbSearchQuery("");
+                              setTmdbSearchYear("2026");
+                              setTmdbSearchType("todos");
+                              handleTmdbSearch(undefined, 1);
+                            }}
+                            className="text-xs text-emerald-400 underline font-bold mt-1"
+                          >
+                            Redefinir Filtros
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Pagination Controls Footer */}
+                    {tmdbTotalPages > 1 && (
+                      <div className="pt-3 border-t border-gray-900 flex items-center justify-between text-xs">
+                        <button
+                          onClick={() => handleTmdbSearch(undefined, tmdbPage - 1)}
+                          disabled={tmdbPage <= 1 || tmdbLoading}
+                          className="px-4 py-2 bg-[#121212] hover:bg-gray-900 border border-gray-800 disabled:opacity-40 text-gray-300 rounded-xl font-bold cursor-pointer transition-all disabled:cursor-not-allowed"
+                        >
+                          ← Anterior
+                        </button>
+
+                        <div className="flex items-center gap-1.5 text-gray-400 font-mono text-[11px]">
+                          <span>Página</span>
+                          <strong className="text-white px-2 py-1 bg-black rounded-lg border border-gray-800">{tmdbPage}</strong>
+                          <span>de {tmdbTotalPages}</span>
+                        </div>
+
+                        <button
+                          onClick={() => handleTmdbSearch(undefined, tmdbPage + 1)}
+                          disabled={tmdbPage >= tmdbTotalPages || tmdbLoading}
+                          className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 border border-emerald-400/50 disabled:opacity-40 text-black disabled:text-gray-500 rounded-xl font-bold cursor-pointer transition-all disabled:cursor-not-allowed"
+                        >
+                          Próxima →
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Error message if any */}
+                {tmdbError && (
+                  <div className="bg-red-950/30 border border-red-900/50 text-red-300 text-xs p-3 rounded-xl flex items-center justify-between">
+                    <span>{tmdbError}</span>
+                    <button 
+                      onClick={() => setTmdbError("")}
+                      className="text-gray-400 hover:text-white text-[10px] font-bold underline"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                )}
+
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+    </div>
+  );
+}

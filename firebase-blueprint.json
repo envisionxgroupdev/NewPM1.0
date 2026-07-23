@@ -1,0 +1,165 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile document",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "admin"]
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": ["name", "email", "password", "role"]
+    },
+    "Movie": {
+      "title": "Movie",
+      "description": "Movie catalog item",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "originalTitle": {
+          "type": "string"
+        },
+        "year": {
+          "type": "number"
+        },
+        "duration": {
+          "type": "string"
+        },
+        "rating": {
+          "type": "number"
+        },
+        "genres": {
+          "type": "array"
+        },
+        "synopsis": {
+          "type": "string"
+        },
+        "backdropUrl": {
+          "type": "string"
+        },
+        "posterUrl": {
+          "type": "string"
+        },
+        "trailerVideoId": {
+          "type": "string"
+        },
+        "cast": {
+          "type": "array"
+        },
+        "director": {
+          "type": "string"
+        },
+        "featured": {
+          "type": "boolean"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["filme", "serie", "anime"]
+        },
+        "imdbId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": ["title", "year", "duration", "rating", "genres", "synopsis", "type"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "User reported issue or feedback",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string"
+        },
+        "userName": {
+          "type": "string"
+        },
+        "userEmail": {
+          "type": "string"
+        },
+        "movieId": {
+          "type": "string"
+        },
+        "movieTitle": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Pendente", "Em Análise", "Resolvido"]
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": ["userId", "userName", "userEmail", "reason", "description", "status", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "User notifications for resolved bug reports",
+      "type": "object",
+      "properties": {
+        "userEmail": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "reportId": {
+          "type": "string"
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": ["userEmail", "title", "message", "read", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Users collection keyed by user ID"
+    },
+    "/movies/{movieId}": {
+      "schema": "Movie",
+      "description": "Movie catalog items keyed by movie ID"
+    },
+    "/reports/{reportId}": {
+      "schema": "Report",
+      "description": "Reports collection keyed by report ID"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User notifications collection"
+    }
+  }
+}
