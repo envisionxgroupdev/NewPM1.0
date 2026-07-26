@@ -1,6 +1,6 @@
 import React from "react";
 import { Movie } from "../types";
-import { Play, Star, Bookmark, BookmarkCheck, Sparkles } from "lucide-react";
+import { Play, Star, Bookmark, BookmarkCheck } from "lucide-react";
 import { motion } from "motion/react";
 
 interface MovieCardProps {
@@ -39,8 +39,7 @@ export default function MovieCard({
 
         {/* Recent / New arrival badge overlay */}
         {isRecent && (
-          <div className="absolute top-2.5 left-2.5 z-10 bg-gradient-to-r from-red-600 to-amber-500 text-white font-display text-[9px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider shadow-md shadow-red-950/45 flex items-center gap-1 border border-white/10">
-            <Sparkles className="w-2.5 h-2.5 text-amber-200 animate-pulse" />
+          <div className="absolute top-2.5 left-2.5 z-10 bg-gradient-to-r from-red-600 to-amber-500 text-white font-display text-[9px] font-black px-2.5 py-0.5 rounded-md uppercase tracking-wider shadow-md shadow-red-950/45 border border-white/10">
             <span>Recém Chegado</span>
           </div>
         )}

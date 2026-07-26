@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Movie, Review } from "../types";
-import { X, Play, Bookmark, BookmarkCheck, Star, Send, Trash2, ChevronLeft, ChevronRight, Clock, Calendar, User, ArrowLeft, Film, Bug } from "lucide-react";
+import { X, Play, Bookmark, BookmarkCheck, Star, Send, Trash2, ChevronLeft, ChevronRight, Clock, Calendar, User, ArrowLeft, Film, Flag } from "lucide-react";
 
 // Helper to get beautiful, themed Netflix-style episode metadata based on genre and index
 const getEpisodeDetails = (type: "serie" | "anime" | "filme", genres: string[], season: number, epNum: number) => {
@@ -376,12 +376,12 @@ export default function MovieModal({
                       {onOpenReport && (
                         <button
                           onClick={() => onOpenReport(movie)}
-                          className="flex items-center gap-2 font-bold px-4 py-2.5 rounded-full border border-amber-800/60 bg-amber-950/20 text-amber-400 hover:text-amber-300 hover:bg-amber-900/40 cursor-pointer hover:scale-[1.03] active:scale-[0.97] transition-all text-xs sm:text-sm shadow-md"
+                          className="flex items-center gap-2 font-bold px-4 py-2.5 rounded-full border border-red-600/60 bg-red-950/40 text-red-400 hover:text-red-200 hover:bg-red-900/60 hover:border-red-500 cursor-pointer hover:scale-[1.03] active:scale-[0.97] transition-all text-xs sm:text-sm shadow-md shadow-red-950/30"
                           id="modal-report-movie-btn"
-                          title="Reportar problema ou bug neste título"
+                          title="Reportar problema neste título"
                         >
-                          <Bug className="w-4 h-4 text-amber-400" />
-                          <span>Reportar Bug</span>
+                          <Flag className="w-4 h-4 text-red-400 fill-red-400/20" />
+                          <span>Reporte</span>
                         </button>
                       )}
                     </div>

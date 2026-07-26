@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Popcorn, Search, Sparkles, Film, Bookmark, Tv, Clapperboard, Shield, LogIn, Info, Bell, CheckCircle2, X } from "lucide-react";
+import { Popcorn, Search, Zap, Film, Bookmark, Tv, Clapperboard, Shield, LogIn, Info, Bell, CheckCircle2, X } from "lucide-react";
 
 interface HeaderProps {
   searchQuery: string;
@@ -188,7 +188,7 @@ export default function Header({
           }`}
           id="nav-animes"
         >
-          <Sparkles className="w-3.5 h-3.5" />
+          <Zap className="w-3.5 h-3.5" />
           <span>Animes</span>
         </button>
 

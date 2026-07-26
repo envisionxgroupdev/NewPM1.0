@@ -11,7 +11,8 @@ import ReportModal from "./components/ReportModal";
 import ReportWebsiteBugModal from "./components/ReportWebsiteBugModal";
 import ProfileModal from "./components/ProfileModal";
 import AdminPanel from "./components/AdminPanel";
-import { Film, Bookmark, Sparkles, AlertCircle, Tv, Flame, Star, Clapperboard, Heart, ArrowRight, Bug } from "lucide-react";
+import { useUserSync } from "./hooks/useUserSync";
+import { Film, Bookmark, Zap, AlertCircle, Tv, Flame, Star, Clapperboard, Heart, ArrowRight, Bug } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
 const ALL_GENRES = ["Tudo", "Ação", "Ficção Científica", "Aventura", "Animação", "Drama", "Família", "Suspense", "Policial"];
@@ -36,36 +37,44 @@ export default function App() {
     setVisibleGridLimit(20);
   }, [activeTab, selectedGenre, searchQuery]);
 
-  // Load user session from local storage on mount and sync with database
+  // Load stored user session on mount
   useEffect(() => {
     const storedUser = localStorage.getItem("pipocamax_user");
     if (storedUser) {
       try {
         const parsed = JSON.parse(storedUser);
         setCurrentUser(parsed);
-
-        // Sync with backend to check for role updates (e.g., promoted to admin)
-        if (parsed.email) {
-          fetch(`/api/auth/me?email=${encodeURIComponent(parsed.email)}`)
-            .then((res) => {
-              if (res.ok) return res.json();
-              throw new Error("Falha ao sincronizar");
-            })
-            .then((data) => {
-              if (data.success && data.user) {
-                setCurrentUser(data.user);
-                localStorage.setItem("pipocamax_user", JSON.stringify(data.user));
-              }
-            })
-            .catch((err) => {
-              console.warn("Erro ao sincronizar sessão com o servidor:", err);
-            });
-        }
       } catch (e) {
         localStorage.removeItem("pipocamax_user");
       }
     }
   }, []);
+
+  // Hook customizado para sincronizar o perfil do usuário e permissões periodicamente com o servidor
+  useUserSync({
+    currentUser,
+    setCurrentUser,
+    intervalMs: 5000, // Sincroniza a cada 5 segundos
+    onRoleChanged: (newRole, oldRole) => {
+      console.log(`[App] Permissão do usuário alterada de "${oldRole}" para "${newRole}"`);
+      // Se o usuário perder o acesso admin enquanto navega no painel de administração, redireciona para o início
+      if (oldRole === "admin" && newRole !== "admin" && activeTab === "admin") {
+        setActiveTab("home");
+      }
+    },
+    onUserLoggedOut: () => {
+      if (activeTab === "admin") {
+        setActiveTab("home");
+      }
+    }
+  });
+
+  // Garantir segurança do painel admin caso as permissões do usuário mudem
+  useEffect(() => {
+    if (activeTab === "admin" && currentUser?.role !== "admin") {
+      setActiveTab("home");
+    }
+  }, [activeTab, currentUser?.role]);
 
   // Load favorites from local storage
   useEffect(() => {
@@ -75,18 +84,38 @@ export default function App() {
     }
   }, []);
 
+  // Helper function to safely parse dates without throwing SyntaxError in strict browser engines
+  const parseSafeDate = (val?: any): number | null => {
+    if (!val) return null;
+    try {
+      if (typeof val === "number") return isNaN(val) ? null : val;
+      if (typeof val === "object") {
+        if (typeof val.seconds === "number") return val.seconds * 1000;
+        if (typeof val._seconds === "number") return val._seconds * 1000;
+      }
+      if (typeof val === "string") {
+        const cleaned = val.trim().replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})/, "$1T$2");
+        const timestamp = Date.parse(cleaned);
+        return isNaN(timestamp) ? null : timestamp;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  };
+
   // Fetch movies from server/DB
   const fetchMovies = async () => {
     try {
       const response = await fetch("/api/movies");
       if (response.ok) {
         const data = await response.json();
-        if (data.movies && Array.isArray(data.movies)) {
+        if (data && data.movies && Array.isArray(data.movies)) {
           setMovies(data.movies);
         }
       }
     } catch (err) {
-      console.error("Erro ao carregar títulos do banco de dados:", err);
+      console.warn("Aviso ao carregar títulos do banco de dados:", err);
     }
   };
 
@@ -125,49 +154,21 @@ export default function App() {
     setSelectedMovie(movie);
   };
 
-  // Identify recently added movies based on database createdAt dates or metadata fallback
+  // Identify recently added movies based on database createdAt dates (within the last 7 days)
   const recentMovieIds = useMemo(() => {
     const ids = new Set<string>();
+    const RECENT_DAYS_LIMIT = 7; // Recém chegado dura 7 dias e depois some
+    const recentCutoffMs = Date.now() - RECENT_DAYS_LIMIT * 24 * 60 * 60 * 1000;
     
-    // Filter movies that have a valid createdAt timestamp
-    const dbMoviesWithDates = movies.filter(m => m.createdAt && !isNaN(Date.parse(m.createdAt)));
-    
-    if (dbMoviesWithDates.length > 0) {
-      // Sort movies by createdAt descending (most recent first)
-      const sorted = [...dbMoviesWithDates].sort((a, b) => {
-        const timeA = new Date(a.createdAt!).getTime();
-        const timeB = new Date(b.createdAt!).getTime();
-        return timeB - timeA;
-      });
-      
-      // Select the N most recently created movies (e.g. up to 4) to highlight
-      const count = Math.min(4, sorted.length);
-      for (let i = 0; i < count; i++) {
-        ids.add(sorted[i].id);
-      }
-      
-      // Also add any movie created in the last 15 days, in case the database grows dynamically
-      const fifteenDaysAgo = Date.now() - 15 * 24 * 60 * 60 * 1000;
-      dbMoviesWithDates.forEach(m => {
-        const time = new Date(m.createdAt!).getTime();
-        if (time > fifteenDaysAgo) {
+    try {
+      movies.forEach(m => {
+        const timestamp = parseSafeDate(m.createdAt);
+        if (timestamp !== null && timestamp >= recentCutoffMs) {
           ids.add(m.id);
         }
       });
-    } else {
-      // Fallback: If no movies have createdAt timestamps (local fallback or identical times),
-      // we mark the newest premium titles from our default catalog (e.g. dune2, insideout2, etc.)
-      const fallbackRecentIds = ["dune2", "insideout2", "cyberpunk", "demonslayer_hashira"];
-      fallbackRecentIds.forEach(id => {
-        if (movies.some(m => m.id === id)) {
-          ids.add(id);
-        }
-      });
-      
-      // If none of those fallback IDs exist, just pick the last 2 movies from the array list
-      if (ids.size === 0 && movies.length > 0) {
-        movies.slice(-2).forEach(m => ids.add(m.id));
-      }
+    } catch (err) {
+      console.warn("Erro ao calcular lançamentos recentes:", err);
     }
     
     return ids;
@@ -390,7 +391,7 @@ export default function App() {
               {/* Row 4: Animes */}
               <NetflixRow
                 title="Animes"
-                icon={<Sparkles className="w-5 h-5 text-amber-400" />}
+                icon={<Zap className="w-5 h-5 text-amber-400" />}
                 movies={animesList}
                 onMovieClick={handleMovieClick}
                 favorites={favorites}
@@ -440,7 +441,7 @@ export default function App() {
                     </>
                   ) : activeTab === "animes" ? (
                     <>
-                      <Sparkles className="w-5.5 h-5.5 text-brand-primary animate-pulse" />
+                      <Zap className="w-5.5 h-5.5 text-brand-primary" />
                       <span>{selectedGenre === "Tudo" ? "Catálogo de Animes" : `Animes de ${selectedGenre}`}</span>
                     </>
                   ) : (
@@ -571,12 +572,12 @@ export default function App() {
                 setIsWebsiteBugModalOpen(true);
               }
             }}
-            className="flex items-center gap-2 bg-amber-950/40 hover:bg-amber-900/60 border border-amber-800/60 text-amber-400 hover:text-amber-300 font-bold px-4 py-2 rounded-full transition-all cursor-pointer shadow-lg shadow-amber-950/30 text-xs shrink-0"
+            className="flex items-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:text-amber-300 font-extrabold px-4 py-2 rounded-full transition-all cursor-pointer shadow-lg shadow-amber-500/10 text-xs shrink-0 hover:scale-[1.03] active:scale-[0.97]"
             id="footer-report-bug-btn"
             title="Relatar um bug no site ou no filtro"
           >
             <Bug className="w-4 h-4 text-amber-400" />
-            <span>Reportar Bug do Site</span>
+            <span>Reportar Bug</span>
           </button>
         </div>
       </footer>

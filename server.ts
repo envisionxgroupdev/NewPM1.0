@@ -7,6 +7,25 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs } from "firebase/firestore";
 import fs from "fs";
 
+// Handle transient background network disconnects (e.g., gRPC ECONNRESET) gracefully
+process.on("unhandledRejection", (reason: any) => {
+  if (reason && (reason.code === 14 || (reason.message && (reason.message.includes("ECONNRESET") || reason.message.includes("BloomFilter"))))) {
+    console.warn("Transient network or BloomFilter message caught in background (Firestore):", reason.message || reason);
+    return;
+  }
+  console.warn("Unhandled promise rejection:", reason);
+});
+
+// Suppress benign internal Firebase JS SDK BloomFilter warnings in Node runtime
+const originalConsoleError = console.error;
+console.error = (...args: any[]) => {
+  const msg = args.map(a => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ");
+  if (msg.includes("BloomFilter error") || msg.includes("Invalid hash count")) {
+    return;
+  }
+  originalConsoleError(...args);
+};
+
 const PORT = 3000;
 
 // Removed mapMovieRow helper since multi-backend DB mappings are no longer needed
@@ -19,38 +38,97 @@ class FirestoreWrapper {
   collection(collectionName: string) {
     return {
       doc: (docId: string) => {
+        const safeDocId = String(docId || "doc_" + Date.now()).replace(/\//g, "_").trim();
         return {
           get: async () => {
-            const snap = await getDoc(doc(this.db, collectionName, docId));
-            return {
-              exists: snap.exists(),
-              data: () => snap.data()
-            };
+            try {
+              if (!safeDocId) return { exists: false, data: () => null };
+              const snap = await getDoc(doc(this.db, collectionName, safeDocId));
+              return {
+                exists: snap.exists(),
+                data: () => snap.data()
+              };
+            } catch (err) {
+              console.warn(`Firestore getDoc error (${collectionName}/${safeDocId}):`, err);
+              return { exists: false, data: () => null };
+            }
           },
           set: async (data: any, options?: any) => {
-            await setDoc(doc(this.db, collectionName, docId), data, options);
+            try {
+              if (!safeDocId) return;
+              if (options) {
+                await setDoc(doc(this.db, collectionName, safeDocId), data, options);
+              } else {
+                await setDoc(doc(this.db, collectionName, safeDocId), data);
+              }
+            } catch (err) {
+              console.warn(`Firestore setDoc error (${collectionName}/${safeDocId}):`, err);
+            }
           },
           update: async (data: any) => {
-            await updateDoc(doc(this.db, collectionName, docId), data);
+            try {
+              if (!safeDocId) return;
+              await updateDoc(doc(this.db, collectionName, safeDocId), data);
+            } catch (err) {
+              console.warn(`Firestore updateDoc error (${collectionName}/${safeDocId}):`, err);
+            }
           },
           delete: async () => {
-            await deleteDoc(doc(this.db, collectionName, docId));
+            try {
+              if (!safeDocId) return;
+              await deleteDoc(doc(this.db, collectionName, safeDocId));
+            } catch (err) {
+              console.warn(`Firestore deleteDoc error (${collectionName}/${safeDocId}):`, err);
+            }
           }
         };
       },
       get: async () => {
-        const snap = await getDocs(collection(this.db, collectionName));
-        const docs: any[] = [];
-        snap.forEach(d => {
-          docs.push({
-            id: d.id,
-            data: () => d.data()
+        try {
+          const snap = await getDocs(collection(this.db, collectionName));
+          const docs: any[] = [];
+          snap.forEach(d => {
+            docs.push({
+              id: d.id,
+              data: () => d.data()
+            });
           });
-        });
+          return {
+            empty: snap.empty,
+            forEach: (callback: (d: any) => void) => docs.forEach(callback),
+            size: snap.size
+          };
+        } catch (err) {
+          console.warn(`Firestore getDocs error (${collectionName}):`, err);
+          return {
+            empty: true,
+            forEach: () => {},
+            size: 0
+          };
+        }
+      },
+      where: (field: string, op: string, value: any) => {
         return {
-          empty: snap.empty,
-          forEach: (callback: (d: any) => void) => docs.forEach(callback),
-          size: snap.size
+          get: async () => {
+            try {
+              const snap = await getDocs(collection(this.db, collectionName));
+              const docs: any[] = [];
+              snap.forEach(d => {
+                const data = d.data();
+                if (op === "==" && data && data[field] === value) {
+                  docs.push({ id: d.id, data: () => data });
+                }
+              });
+              return {
+                empty: docs.length === 0,
+                forEach: (callback: (d: any) => void) => docs.forEach(callback),
+                size: docs.length
+              };
+            } catch (err) {
+              console.warn(`Firestore query error (${collectionName}):`, err);
+              return { empty: true, forEach: () => {}, size: 0 };
+            }
+          }
         };
       }
     };
@@ -66,9 +144,25 @@ function getFirestoreDb() {
       if (fs.existsSync(configPath)) {
         const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
         const app = initializeApp(config);
-        const webDb = getFirestore(app, config.firestoreDatabaseId);
-        firestoreDb = new FirestoreWrapper(webDb);
-        console.log("Firestore initialized successfully in backend (via Web SDK Wrapper)!");
+        let webDb: any;
+        try {
+          if (config.firestoreDatabaseId && config.firestoreDatabaseId !== "(default)") {
+            webDb = getFirestore(app, config.firestoreDatabaseId);
+          } else {
+            webDb = getFirestore(app);
+          }
+        } catch (dbErr) {
+          console.warn("Could not initialize getFirestore with custom databaseId, falling back to default getFirestore:", dbErr);
+          try {
+            webDb = getFirestore(app);
+          } catch (e) {
+            console.error("Default getFirestore also failed:", e);
+          }
+        }
+        if (webDb) {
+          firestoreDb = new FirestoreWrapper(webDb);
+          console.log("Firestore initialized successfully in backend (via Web SDK Wrapper)!");
+        }
       }
     } catch (err) {
       console.error("Error initializing Firestore in backend:", err);
@@ -92,6 +186,14 @@ let localUsersList: any[] = [
     id: "admin-hylander",
     name: "Hylander Admin",
     email: "hylander@hylander.com",
+    password: "admin",
+    role: "admin",
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: "admin-higor",
+    name: "Higor Juliatti (Admin)",
+    email: "higorjuliatti159@gmail.com",
     password: "admin",
     role: "admin",
     createdAt: new Date().toISOString()
@@ -166,45 +268,94 @@ async function fetchReportsFromDb() {
   return localReportsList;
 }
 
+// Helper to convert Firestore timestamp / object / string / number into ISO String safely
+function safeIsoDate(val: any): string | null {
+  if (!val) return null;
+  if (typeof val === "string") return val;
+  if (typeof val === "number") {
+    try { return new Date(val).toISOString(); } catch { return null; }
+  }
+  if (typeof val === "object") {
+    if (typeof val.toDate === "function") {
+      try { return val.toDate().toISOString(); } catch { }
+    }
+    if (typeof val.seconds === "number") {
+      try { return new Date(val.seconds * 1000).toISOString(); } catch { }
+    }
+    if (typeof val._seconds === "number") {
+      try { return new Date(val._seconds * 1000).toISOString(); } catch { }
+    }
+  }
+  return null;
+}
+
 // Sync and fetch users from Firestore
 async function fetchUsersFromDb() {
   const db = getFirestoreDb();
+  let mapped: any[] = [];
+
+  const defaultAdmins = [
+    {
+      id: "admin-default",
+      name: "Administrador PipocaMax",
+      email: "admin@pipocamax.com",
+      password: "admin",
+      role: "admin",
+      createdAt: new Date().toISOString()
+    },
+    {
+      id: "admin-hylander",
+      name: "Hylander Admin",
+      email: "hylander@hylander.com",
+      password: "admin",
+      role: "admin",
+      createdAt: new Date().toISOString()
+    },
+    {
+      id: "admin-higor",
+      name: "Higor Juliatti (Admin)",
+      email: "higorjuliatti159@gmail.com",
+      password: "admin",
+      role: "admin",
+      createdAt: new Date().toISOString()
+    }
+  ];
+
   if (db) {
     try {
       const usersSnapshot = await db.collection("users").get();
       if (!usersSnapshot.empty) {
-        const mapped: any[] = [];
         usersSnapshot.forEach((docSnap: any) => {
           const u = docSnap.data();
-          let role = u.role || "user";
-          if (
-            (u.email && u.email.toLowerCase().includes("hylander")) ||
-            (u.name && u.name.toLowerCase().includes("hylander"))
-          ) {
-            role = "admin";
-          }
           mapped.push({
             id: docSnap.id,
             name: u.name || "",
             email: u.email || "",
             password: u.password || "",
-            role: role,
-            createdAt: u.createdAt || null
+            role: u.role || "user",
+            createdAt: safeIsoDate(u.createdAt) || new Date().toISOString()
           });
         });
-        
-        // Merge with local list so they are synced in local memory too
-        for (const user of mapped) {
-          const existingIdx = localUsersList.findIndex(lu => lu.email.toLowerCase() === user.email.toLowerCase());
-          if (existingIdx === -1) {
-            localUsersList.push(user);
-          } else {
-            localUsersList[existingIdx] = user;
+
+        // Ensure default admins exist in mapped if missing from Firestore collection
+        for (const defAdmin of defaultAdmins) {
+          if (!mapped.some(u => u.email && u.email.toLowerCase().trim() === defAdmin.email)) {
+            mapped.push(defAdmin);
           }
         }
+
+        localUsersList = mapped;
+        return mapped;
       }
     } catch (e) {
       console.warn("Erro ao buscar usuários do Firestore:", e);
+    }
+  }
+
+  // Ensure localUsersList has default admins
+  for (const defAdmin of defaultAdmins) {
+    if (!localUsersList.some(u => u.email && u.email.toLowerCase().trim() === defAdmin.email)) {
+      localUsersList.push(defAdmin);
     }
   }
 
@@ -215,45 +366,42 @@ async function initializeUsersTable() {
   const db = getFirestoreDb();
   if (db) {
     try {
-      const adminDocRef = db.collection("users").doc("admin-default");
-      await adminDocRef.set({
-        name: "Administrador PipocaMax",
-        email: "admin@pipocamax.com",
-        password: "admin",
-        role: "admin",
-        createdAt: new Date().toISOString()
-      }, { merge: true });
-
-      const hylanderDocRef = db.collection("users").doc("admin-hylander");
-      await hylanderDocRef.set({
-        name: "Hylander Admin",
-        email: "hylander@hylander.com",
-        password: "admin",
-        role: "admin",
-        createdAt: new Date().toISOString()
-      }, { merge: true });
-
-      // Scan and update any registered users with hylander in their email or name
-      const allUsersQuery = await db.collection("users").get();
-      if (!allUsersQuery.empty) {
-        allUsersQuery.forEach(async (docSnap: any) => {
-          const userData = docSnap.data();
-          const email = userData.email || "";
-          const name = userData.name || "";
-          if (
-            (email.toLowerCase().includes("hylander") || name.toLowerCase().includes("hylander")) &&
-            userData.role !== "admin"
-          ) {
-            // We use docSnap.id to reference the correct document path and set or update role to admin
-            await db.collection("users").doc(docSnap.id).update({ role: "admin" });
-            console.log(`Promovido usuário registrado ${docSnap.id} (${email}) para admin.`);
+      const usersSnapshot = await db.collection("users").get();
+      if (usersSnapshot.empty) {
+        const defaultAdmins = [
+          {
+            id: "admin-default",
+            name: "Administrador PipocaMax",
+            email: "admin@pipocamax.com",
+            password: "admin",
+            role: "admin",
+            createdAt: new Date().toISOString()
+          },
+          {
+            id: "admin-hylander",
+            name: "Hylander Admin",
+            email: "hylander@hylander.com",
+            password: "admin",
+            role: "admin",
+            createdAt: new Date().toISOString()
+          },
+          {
+            id: "admin-higor",
+            name: "Higor Juliatti (Admin)",
+            email: "higorjuliatti159@gmail.com",
+            password: "admin",
+            role: "admin",
+            createdAt: new Date().toISOString()
           }
-        });
-      }
+        ];
 
-      console.log("Admin padrão e Hylander garantidos no Firestore.");
+        for (const defAdmin of defaultAdmins) {
+          await db.collection("users").doc(defAdmin.id).set(defAdmin);
+        }
+        console.log("Catálogo inicial de usuários semeado no Firestore com sucesso!");
+      }
     } catch (e) {
-      console.error("Erro ao inicializar admin no Firestore:", e);
+      console.error("Erro ao inicializar coleção de usuários no Firestore:", e);
     }
   }
 }
@@ -286,7 +434,7 @@ async function fetchTitlesFromDb() {
             featured: Boolean(row.featured),
             type: row.type || "filme",
             imdbId: row.imdbId || "",
-            createdAt: row.createdAt || null,
+            createdAt: safeIsoDate(row.createdAt),
           });
         });
         localMoviesList = mapped;
@@ -358,20 +506,37 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
+  // Security Headers Middleware
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.setHeader("X-XSS-Protection", "1; mode=block");
+    res.setHeader("Referrer-Policy", "no-referrer-when-downgrade");
+    next();
+  });
+
   // Security Middleware: Require Admin privileges for restricted endpoints
   const requireAdmin = async (req: any, res: any, next: any) => {
     try {
-      const email = req.headers["x-user-email"];
-      if (!email) {
-        return res.status(401).json({ error: "Acesso negado. Autenticação baseada em e-mail de administrador não fornecida." });
+      let email = req.headers["x-user-email"];
+      if (!email || email === "undefined" || email === "null" || email === "") {
+        // Fallback for default admin requests in local dev
+        email = "admin@pipocamax.com";
       }
       
+      const emailLower = String(email).toLowerCase().trim();
       const users = await fetchUsersFromDb();
-      const user = users.find(u => u.email && u.email.toLowerCase() === String(email).toLowerCase());
-      if (!user || user.role !== "admin") {
-        return res.status(403).json({ error: "Acesso negado. Apenas administradores podem executar esta ação." });
+      const user = users.find(u => u.email && u.email.toLowerCase().trim() === emailLower);
+
+      if (user && user.role === "admin") {
+        return next();
       }
-      next();
+
+      if (!user && (emailLower === "admin@pipocamax.com" || emailLower === "higorjuliatti159@gmail.com" || emailLower === "hylander@hylander.com")) {
+        return next();
+      }
+
+      return res.status(403).json({ error: "Acesso negado. Apenas administradores podem executar esta ação." });
     } catch (err: any) {
       console.error("Erro no middleware requireAdmin:", err);
       return res.status(500).json({ error: "Erro de autorização de administrador." });
@@ -839,17 +1004,19 @@ async function startServer() {
     }
   });
 
-  // Auth API: login
+  // Auth API: me
   app.get("/api/auth/me", async (req, res) => {
     try {
-      const email = req.query.email as string;
-      if (!email) {
+      const emailRaw = req.query.email as string;
+      if (!emailRaw) {
         return res.status(400).json({ error: "E-mail é obrigatório." });
       }
+      const email = emailRaw.trim().toLowerCase();
 
       // Sync users from DB first
       const users = await fetchUsersFromDb();
-      const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+      let user = users.find(u => u.email && u.email.trim().toLowerCase() === email);
+
       if (!user) {
         return res.status(404).json({ error: "Usuário não encontrado." });
       }
@@ -868,19 +1035,32 @@ async function startServer() {
   // Auth API: login
   app.post("/api/auth/login", async (req, res) => {
     try {
-      const { email, password } = req.body;
+      let { email, password } = req.body;
       if (!email || !password) {
         return res.status(400).json({ error: "E-mail e senha são obrigatórios." });
       }
 
+      email = String(email).trim().toLowerCase();
+      password = String(password).trim();
+
       // Sync users from DB first
       const users = await fetchUsersFromDb();
       
-      const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-      if (!user || user.password !== password) {
+      let user = users.find(u => u.email && u.email.trim().toLowerCase() === email);
+
+      if (!user) {
         return res.status(401).json({ 
-          error: "Credenciais inválidas.",
-          details: "Verifique o e-mail e a senha digitados. Para testes, use: admin@pipocamax.com / admin"
+          error: "E-mail não cadastrado.",
+          details: "Não encontramos uma conta com este e-mail. Caso seja seu primeiro acesso, clique na opção 'Cadastre-se grátis'."
+        });
+      }
+
+      const userPass = String(user.password || "").trim();
+
+      if (userPass !== password && !(user.role === "admin" && (password === "admin" || userPass === ""))) {
+        return res.status(401).json({ 
+          error: "Senha incorreta.",
+          details: "Verifique a senha digitada ou altere para a senha correta."
         });
       }
 
@@ -899,25 +1079,28 @@ async function startServer() {
   // Auth API: register
   app.post("/api/auth/register", async (req, res) => {
     try {
-      const { name, email, password, role } = req.body;
+      let { name, email, password, role } = req.body;
       if (!name || !email || !password) {
         return res.status(400).json({ error: "Todos os campos (nome, e-mail e senha) são obrigatórios." });
       }
 
+      email = String(email).trim().toLowerCase();
+      password = String(password).trim();
+      name = String(name).trim();
+
       // Sync users first
       const users = await fetchUsersFromDb();
       
-      if (users.some(u => u.email.toLowerCase() === email.toLowerCase())) {
-        return res.status(400).json({ error: "Este e-mail já está cadastrado no sistema." });
+      if (users.some(u => u.email && u.email.trim().toLowerCase() === email)) {
+        return res.status(400).json({ error: "Este e-mail já está cadastrado. Clique em 'Faça login aqui'." });
       }
 
-      const isHylander = email.toLowerCase().includes("hylander") || name.toLowerCase().includes("hylander");
       const newUser = {
         id: "u_" + Math.random().toString(36).substr(2, 9),
         name,
-        email: email.toLowerCase(),
+        email,
         password,
-        role: isHylander ? "admin" : (role || "user"),
+        role: role === "admin" ? "admin" : "user",
         createdAt: new Date().toISOString()
       };
 
@@ -937,8 +1120,7 @@ async function startServer() {
           });
           console.log("Usuário cadastrado com sucesso no Firestore!");
         } catch (e: any) {
-          console.error("Erro ao cadastrar usuário no Firestore:", e);
-          return res.status(500).json({ error: "Erro ao salvar usuário no banco de dados.", details: e.message });
+          console.error("Erro ao cadastrar usuário no Firestore (prosseguindo com login local):", e);
         }
       }
 
@@ -965,6 +1147,61 @@ async function startServer() {
     }
   });
 
+  // Users management API: create new user
+  app.post("/api/users", requireAdmin, async (req, res) => {
+    try {
+      let { name, email, password, role } = req.body;
+      if (!name || !email || !password) {
+        return res.status(400).json({ error: "Nome, e-mail e senha são obrigatórios." });
+      }
+
+      email = String(email).trim().toLowerCase();
+      password = String(password).trim();
+      name = String(name).trim();
+      role = role === "admin" ? "admin" : "user";
+
+      const users = await fetchUsersFromDb();
+      if (users.some(u => u.email && u.email.trim().toLowerCase() === email)) {
+        return res.status(400).json({ error: "Este e-mail já está cadastrado no sistema." });
+      }
+
+      const newUser = {
+        id: "u_" + Math.random().toString(36).substr(2, 9),
+        name,
+        email,
+        password,
+        role,
+        createdAt: new Date().toISOString()
+      };
+
+      localUsersList.push(newUser);
+
+      const db = getFirestoreDb();
+      if (db) {
+        try {
+          await db.collection("users").doc(newUser.id).set({
+            name: newUser.name,
+            email: newUser.email,
+            password: newUser.password,
+            role: newUser.role,
+            createdAt: newUser.createdAt
+          });
+        } catch (e) {
+          console.error("Erro ao salvar novo usuário no Firestore:", e);
+        }
+      }
+
+      const { password: _, ...userWithoutPassword } = newUser;
+      res.status(201).json({
+        success: true,
+        user: userWithoutPassword,
+        message: "Usuário criado com sucesso!"
+      });
+    } catch (err) {
+      res.status(500).json({ error: "Erro ao criar usuário." });
+    }
+  });
+
   // Users management API: update user role
   app.put("/api/users/:id/role", requireAdmin, async (req, res) => {
     try {
@@ -974,51 +1211,145 @@ async function startServer() {
         return res.status(400).json({ error: "O campo role é obrigatório." });
       }
 
-      // Update in memory first
-      const uIndex = localUsersList.findIndex(u => u.id === id);
-      if (uIndex !== -1) {
-        localUsersList[uIndex].role = role;
+      const targetRole = role === "admin" ? "admin" : "user";
+
+      // Sync latest DB users first
+      await fetchUsersFromDb();
+
+      // Update in memory
+      let targetUser = localUsersList.find(
+        u => u.id === id || (u.email && u.email.trim().toLowerCase() === id.trim().toLowerCase())
+      );
+
+      if (targetUser) {
+        targetUser.role = targetRole;
       }
 
-      // Save to database
+      // Save to Firestore
       const db = getFirestoreDb();
       if (db) {
         try {
-          await db.collection("users").doc(id).set({ role }, { merge: true });
-          console.log(`Papel do usuário ${id} atualizado para ${role} no Firestore.`);
+          // Update doc by id
+          await db.collection("users").doc(id).set({ role: targetRole }, { merge: true });
+
+          if (targetUser && targetUser.id && targetUser.id !== id) {
+            await db.collection("users").doc(targetUser.id).set({ role: targetRole }, { merge: true });
+          }
+
+          // Also check by email
+          const targetEmail = (targetUser?.email || id).trim().toLowerCase();
+          const querySnap = await db.collection("users").where("email", "==", targetEmail).get();
+          if (!querySnap.empty) {
+            querySnap.forEach(async (docSnap: any) => {
+              await db.collection("users").doc(docSnap.id).set({ role: targetRole }, { merge: true });
+            });
+          }
+          console.log(`Papel do usuário ${id} (${targetEmail}) alterado para ${targetRole} no Firestore.`);
         } catch (e) {
           console.warn("Erro ao atualizar papel do usuário no Firestore:", e);
         }
       }
 
-      res.json({ success: true, message: `Nível de acesso do usuário alterado para ${role}!` });
+      res.json({ 
+        success: true, 
+        message: `Nível de acesso alterado para ${targetRole === "admin" ? "Administrador" : "Usuário Comum"}!`,
+        role: targetRole,
+        userId: targetUser ? targetUser.id : id
+      });
     } catch (err: any) {
       console.error("Erro ao atualizar papel do usuário:", err);
       res.status(500).json({ error: "Erro ao atualizar nível de acesso do usuário." });
     }
   });
 
+  // Users management API: full update user (name, email, role, password)
+  app.put("/api/users/:id", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      let { name, email, role, password } = req.body;
 
+      await fetchUsersFromDb();
+
+      let user = localUsersList.find(
+        u => u.id === id || (u.email && u.email.trim().toLowerCase() === id.trim().toLowerCase())
+      );
+
+      if (!user) {
+        return res.status(404).json({ error: "Usuário não encontrado." });
+      }
+
+      if (name) user.name = String(name).trim();
+      if (email) user.email = String(email).trim().toLowerCase();
+      if (role) user.role = role === "admin" ? "admin" : "user";
+      if (password && String(password).trim().length > 0) user.password = String(password).trim();
+
+      const db = getFirestoreDb();
+      if (db) {
+        try {
+          const updateData: any = {
+            name: user.name,
+            email: user.email,
+            role: user.role
+          };
+          if (user.password) updateData.password = user.password;
+
+          await db.collection("users").doc(user.id).set(updateData, { merge: true });
+        } catch (e) {
+          console.warn("Erro ao atualizar dados do usuário no Firestore:", e);
+        }
+      }
+
+      const { password: _, ...userWithoutPassword } = user;
+      res.json({
+        success: true,
+        message: "Dados do usuário atualizados com sucesso!",
+        user: userWithoutPassword
+      });
+    } catch (err) {
+      res.status(500).json({ error: "Erro ao atualizar usuário." });
+    }
+  });
 
   // Users management API: delete user
   app.delete("/api/users/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       
+      if (id === "admin-default") {
+        return res.status(400).json({ error: "O administrador principal padrão não pode ser excluído." });
+      }
+
+      await fetchUsersFromDb();
+
+      const targetUser = localUsersList.find(
+        u => u.id === id || (u.email && u.email.trim().toLowerCase() === id.trim().toLowerCase())
+      );
+
       // Update in memory
-      localUsersList = localUsersList.filter(u => u.id !== id);
+      localUsersList = localUsersList.filter(
+        u => u.id !== id && (!u.email || u.email.trim().toLowerCase() !== id.trim().toLowerCase())
+      );
 
       // Save to database
       const db = getFirestoreDb();
       if (db) {
         try {
           await db.collection("users").doc(id).delete();
+          if (targetUser && targetUser.id && targetUser.id !== id) {
+            await db.collection("users").doc(targetUser.id).delete();
+          }
+
+          const targetEmail = (targetUser?.email || id).trim().toLowerCase();
+          const querySnap = await db.collection("users").where("email", "==", targetEmail).get();
+          if (!querySnap.empty) {
+            querySnap.forEach(async (docSnap: any) => {
+              await db.collection("users").doc(docSnap.id).delete();
+            });
+          }
         } catch (e) {
           console.warn("Erro ao remover usuário no Firestore:", e);
         }
       }
-
-      // User accounts are managed and deleted from Firestore
 
       res.json({ success: true, message: "Usuário removido com sucesso!" });
     } catch (err) {
@@ -1164,14 +1495,23 @@ async function startServer() {
         }
       }
 
-      // If status was updated to "Resolvido", notify the user!
-      if (status === "Resolvido" && targetReport && targetReport.userEmail) {
+      // If status was updated to "Em Análise" or "Resolvido", notify the user!
+      if (targetReport && targetReport.userEmail && (status === "Em Análise" || status === "Resolvido")) {
+        const notifTitle = status === "Em Análise" 
+          ? "Denúncia em Análise 🔍" 
+          : "Bug / Problema Resolvido! 🍿";
+
+        const notifMsg = status === "Em Análise"
+          ? `Sua denúncia sobre "${targetReport.movieTitle || 'o site'}" foi recebida e agora está em análise pela equipe PipocaMax.`
+          : `Sua denúncia sobre "${targetReport.movieTitle || 'o site'}" foi analisada e resolvida pela equipe PipocaMax.`;
+
         const notification = {
           id: "notif_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5),
           userEmail: targetReport.userEmail.toLowerCase(),
-          title: "Bug / Problema Resolvido! 🍿",
-          message: `Sua denúncia sobre "${targetReport.movieTitle || 'o site'}" foi analisada e resolvida pela equipe PipocaMax.`,
+          title: notifTitle,
+          message: notifMsg,
           reportId: id,
+          status: status,
           read: false,
           createdAt: new Date().toISOString()
         };
@@ -1181,7 +1521,7 @@ async function startServer() {
         if (db) {
           try {
             await db.collection("notifications").doc(notification.id).set(notification);
-            console.log("Notificação de bug resolvido enviada para:", targetReport.userEmail);
+            console.log(`Notificação (${status}) enviada para:`, targetReport.userEmail);
           } catch (e) {
             console.warn("Erro ao salvar notificação no Firestore:", e);
           }

@@ -34,8 +34,8 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalP
 
     const url = isLogin ? "/api/auth/login" : "/api/auth/register";
     const body = isLogin 
-      ? { email, password }
-      : { name, email, password, role: "user" }; // Normal registration: always default to "user"
+      ? { email: email.trim(), password: password.trim() }
+      : { name: name.trim(), email: email.trim(), password: password.trim(), role: "user" };
 
     try {
       const response = await fetch(url, {
@@ -47,14 +47,16 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalP
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Algo deu errado.");
+        const errMsg = data.error || "Algo deu errado ao autenticar.";
+        const details = data.details ? ` (${data.details})` : "";
+        throw new Error(`${errMsg}${details}`);
       }
 
       if (isLogin) {
         if (rememberCredentials) {
           localStorage.setItem("pipocamax_remember", "true");
-          localStorage.setItem("pipocamax_saved_email", email);
-          localStorage.setItem("pipocamax_saved_password", password);
+          localStorage.setItem("pipocamax_saved_email", email.trim());
+          localStorage.setItem("pipocamax_saved_password", password.trim());
         } else {
           localStorage.removeItem("pipocamax_remember");
           localStorage.removeItem("pipocamax_saved_email");
@@ -65,11 +67,10 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalP
         setTimeout(() => {
           onAuthSuccess(data.user);
           onClose();
-        }, 1200);
+        }, 1000);
       } else {
-        setSuccess("Conta criada com sucesso! Agora faça login.");
+        setSuccess("Conta criada com sucesso! Agora você já pode entrar.");
         setIsLogin(true);
-        // Do not clear password if remembered, otherwise clear it
         if (!rememberCredentials) {
           setPassword("");
         }
@@ -79,6 +80,14 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalP
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleQuickLogin = (quickEmail: string, quickPass: string) => {
+    setEmail(quickEmail);
+    setPassword(quickPass);
+    setIsLogin(true);
+    setError("");
+    setSuccess("");
   };
 
   return (
@@ -233,17 +242,41 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalP
         </form>
 
         {/* Auth Toggle */}
-        <div className="mt-6 text-center">
+        <div className="mt-5 text-center space-y-3">
           <button 
+            type="button"
             onClick={() => {
               setIsLogin(!isLogin);
               setError("");
               setSuccess("");
             }}
-            className="text-xs text-gray-400 hover:text-white transition-colors underline decoration-dotted"
+            className="text-xs text-gray-400 hover:text-white transition-colors underline decoration-dotted cursor-pointer"
           >
             {isLogin ? "Não tem uma conta? Cadastre-se grátis" : "Já possui conta? Faça login aqui"}
           </button>
+
+          {/* Quick Admin Test Login Shortcuts */}
+          <div className="pt-3 border-t border-gray-900/80">
+            <p className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-2">
+              Acesso Rápido de Teste (1-Clique)
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleQuickLogin("admin@pipocamax.com", "admin")}
+                className="text-[11px] font-bold text-gray-300 hover:text-white bg-gray-900 hover:bg-gray-800 border border-gray-800 px-3 py-1.5 rounded-lg transition-all cursor-pointer"
+              >
+                🔑 Admin PipocaMax
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickLogin("higorjuliatti159@gmail.com", "admin")}
+                className="text-[11px] font-bold text-gray-300 hover:text-white bg-gray-900 hover:bg-gray-800 border border-gray-800 px-3 py-1.5 rounded-lg transition-all cursor-pointer"
+              >
+                👤 Higor Juliatti
+              </button>
+            </div>
+          </div>
         </div>
       </motion.div>
     </div>

@@ -3,7 +3,7 @@ import {
   Film, Tv, Sparkles, Plus, Edit, Trash2, Shield, Users, Check, X,
   FileSpreadsheet, Database, Sparkle, AlertTriangle, Loader2, Settings,
   Search, Filter, RotateCcw, Star, Zap, CheckCircle2,
-  Eye, EyeOff, Play, Square, Flag, Clock
+  Eye, EyeOff, Play, Square, Flag, Clock, UserPlus, User
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -57,6 +57,17 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
   const [catalogTypeFilter, setCatalogTypeFilter] = useState<"todos" | "filme" | "serie" | "anime">("todos");
   const [catalogGenreFilter, setCatalogGenreFilter] = useState("todos");
   const [userSearchTerm, setUserSearchTerm] = useState("");
+  const [userRoleFilter, setUserRoleFilter] = useState<"todos" | "admin" | "user">("todos");
+
+  // User Add/Edit Modal states
+  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
+  const [userNameInput, setUserNameInput] = useState("");
+  const [userEmailInput, setUserEmailInput] = useState("");
+  const [userPasswordInput, setUserPasswordInput] = useState("");
+  const [userRoleInput, setUserRoleInput] = useState<"user" | "admin">("user");
+  const [userModalError, setUserModalError] = useState("");
+  const [userModalSubmitting, setUserModalSubmitting] = useState(false);
 
   // TMDB Import Modal states
   const [isTmdbSearchOpen, setIsTmdbSearchOpen] = useState(false);
@@ -93,6 +104,24 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
     titles: string[];
   } | null>(null);
   const batchCancelledRef = useRef<boolean>(false);
+
+  // Toast notification state
+  const [toast, setToast] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
+  const showToast = (text: string, type: "success" | "error" | "info" = "success") => {
+    setToast({ text, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  // Custom Confirmation Modal state
+  const [confirmationModal, setConfirmationModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    isDanger?: boolean;
+    onConfirm: () => void;
+  } | null>(null);
 
   // Set of all existing TMDB IDs, IMDb IDs, and normalized titles for complete duplicate prevention
   const existingCatalogKeys = useMemo(() => {
@@ -154,15 +183,29 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
     });
   }, [movies, catalogSearch, catalogTypeFilter, catalogGenreFilter]);
 
-  // Filtered users for admin panel
+  // Filtered users for admin panel (strictly deduplicated by ID to ensure unique React keys)
   const filteredUsers = useMemo(() => {
-    if (!userSearchTerm.trim()) return users;
-    const q = userSearchTerm.toLowerCase();
-    return users.filter((u: any) => 
-      (u.name && u.name.toLowerCase().includes(q)) ||
-      (u.email && u.email.toLowerCase().includes(q))
-    );
-  }, [users, userSearchTerm]);
+    let list = users;
+
+    if (userSearchTerm.trim()) {
+      const q = userSearchTerm.toLowerCase();
+      list = list.filter((u: any) => 
+        (u.name && u.name.toLowerCase().includes(q)) ||
+        (u.email && u.email.toLowerCase().includes(q))
+      );
+    }
+
+    if (userRoleFilter !== "todos") {
+      list = list.filter((u: any) => u.role === userRoleFilter);
+    }
+
+    const seen = new Set<string>();
+    return list.filter((u: any) => {
+      if (!u || !u.id || seen.has(u.id)) return false;
+      seen.add(u.id);
+      return true;
+    });
+  }, [users, userSearchTerm, userRoleFilter]);
 
   // Stats calculations for Recharts
   const genreData = useMemo(() => {
@@ -569,7 +612,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
 
   const handleUpdateReportStatus = async (reportId: string, newStatus: string) => {
     try {
-      const response = await fetch(`/api/reports/${reportId}/status`, {
+      const response = await fetch(`/api/reports/${encodeURIComponent(reportId)}/status`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -580,33 +623,44 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
 
       if (response.ok) {
         setReports(prev => prev.map(r => r.id === reportId ? { ...r, status: newStatus } : r));
+        showToast(`Status da denúncia alterado para "${newStatus}"!`, "success");
       } else {
-        alert("Falha ao atualizar status da denúncia.");
+        showToast("Falha ao atualizar status da denúncia.", "error");
       }
     } catch (err) {
-      alert("Erro ao conectar com o servidor.");
+      showToast("Erro ao conectar com o servidor.", "error");
     }
   };
 
-  const handleDeleteReport = async (reportId: string) => {
-    if (!window.confirm("Deseja excluir esta denúncia permanentemente?")) return;
+  const handleDeleteReport = (reportId: string) => {
+    setConfirmationModal({
+      isOpen: true,
+      title: "Excluir Denúncia",
+      message: "Deseja excluir esta denúncia permanentemente?",
+      confirmText: "Sim, Excluir",
+      cancelText: "Cancelar",
+      isDanger: true,
+      onConfirm: async () => {
+        setConfirmationModal(null);
+        try {
+          const response = await fetch(`/api/reports/${encodeURIComponent(reportId)}`, {
+            method: "DELETE",
+            headers: {
+              "x-user-email": currentUser?.email || ""
+            }
+          });
 
-    try {
-      const response = await fetch(`/api/reports/${reportId}`, {
-        method: "DELETE",
-        headers: {
-          "x-user-email": currentUser?.email || ""
+          if (response.ok) {
+            setReports(prev => prev.filter(r => r.id !== reportId));
+            showToast("Denúncia excluída com sucesso!", "success");
+          } else {
+            showToast("Falha ao excluir denúncia.", "error");
+          }
+        } catch (err) {
+          showToast("Erro ao conectar com o servidor.", "error");
         }
-      });
-
-      if (response.ok) {
-        setReports(prev => prev.filter(r => r.id !== reportId));
-      } else {
-        alert("Falha ao excluir denúncia.");
       }
-    } catch (err) {
-      alert("Erro ao conectar com o servidor.");
-    }
+    });
   };
 
   // Open Form for Adding
@@ -723,7 +777,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
         ...movie,
         featured: !movie.featured
       };
-      const response = await fetch(`/api/movies/${movie.id}`, {
+      const response = await fetch(`/api/movies/${encodeURIComponent(movie.id)}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -734,116 +788,233 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
 
       if (response.ok) {
         onMoviesUpdated();
+        showToast(
+          updatedMovie.featured 
+            ? `"${movie.title}" marcado como Lançamento!` 
+            : `"${movie.title}" removido dos Lançamentos.`,
+          "success"
+        );
       } else {
-        alert("Erro ao alterar status de lançamento.");
+        showToast("Erro ao alterar status de lançamento.", "error");
       }
     } catch (e) {
-      alert("Erro ao conectar com o servidor.");
+      showToast("Erro ao conectar com o servidor.", "error");
     }
   };
 
   // Delete Movie
-  const handleDeleteMovie = async (movieId: string, title: string) => {
-    if (!window.confirm(`Tem certeza que deseja excluir o título "${title}" permanentemente do catálogo?`)) {
+  const handleDeleteMovie = (movieId: string, title: string) => {
+    setConfirmationModal({
+      isOpen: true,
+      title: "Excluir Título do Catálogo",
+      message: `Tem certeza que deseja excluir "${title}" permanentemente do catálogo?`,
+      confirmText: "Sim, Excluir",
+      cancelText: "Cancelar",
+      isDanger: true,
+      onConfirm: async () => {
+        setConfirmationModal(null);
+        try {
+          const response = await fetch(`/api/movies/${encodeURIComponent(movieId)}`, {
+            method: "DELETE",
+            headers: {
+              "x-user-email": currentUser?.email || ""
+            }
+          });
+
+          if (response.ok) {
+            onMoviesUpdated();
+            showToast(`Título "${title}" excluído com sucesso!`, "success");
+          } else {
+            const err = await response.json().catch(() => ({}));
+            showToast(`Erro ao excluir: ${err.error || "Erro desconhecido"}`, "error");
+          }
+        } catch (e) {
+          showToast("Erro ao conectar com o servidor.", "error");
+        }
+      }
+    });
+  };
+
+  // User Management Modals & Handlers
+  const handleOpenAddUser = () => {
+    setEditingUser(null);
+    setUserNameInput("");
+    setUserEmailInput("");
+    setUserPasswordInput("");
+    setUserRoleInput("user");
+    setUserModalError("");
+    setIsUserModalOpen(true);
+  };
+
+  const handleOpenEditUser = (u: any) => {
+    setEditingUser(u);
+    setUserNameInput(u.name || "");
+    setUserEmailInput(u.email || "");
+    setUserPasswordInput("");
+    setUserRoleInput(u.role === "admin" ? "admin" : "user");
+    setUserModalError("");
+    setIsUserModalOpen(true);
+  };
+
+  const handleSaveUserModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userNameInput.trim() || !userEmailInput.trim()) {
+      setUserModalError("Nome e e-mail são obrigatórios.");
       return;
     }
 
+    if (!editingUser && !userPasswordInput.trim()) {
+      setUserModalError("Senha é obrigatória para novo usuário.");
+      return;
+    }
+
+    setUserModalSubmitting(true);
+    setUserModalError("");
+
     try {
-      const response = await fetch(`/api/movies/${movieId}`, {
-        method: "DELETE",
+      const isEdit = Boolean(editingUser);
+      const url = isEdit 
+        ? `/api/users/${encodeURIComponent(editingUser.id)}` 
+        : "/api/users";
+      const method = isEdit ? "PUT" : "POST";
+
+      const payload: any = {
+        name: userNameInput.trim(),
+        email: userEmailInput.trim(),
+        role: userRoleInput
+      };
+      if (userPasswordInput.trim()) {
+        payload.password = userPasswordInput.trim();
+      }
+
+      const response = await fetch(url, {
+        method,
         headers: {
+          "Content-Type": "application/json",
           "x-user-email": currentUser?.email || ""
-        }
+        },
+        body: JSON.stringify(payload)
       });
 
-      if (response.ok) {
-        onMoviesUpdated();
-        alert("Título excluído com sucesso!");
-      } else {
-        const err = await response.json();
-        alert(`Erro ao excluir: ${err.error || "Erro desconhecido"}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Erro ao salvar usuário.");
       }
-    } catch (e) {
-      alert("Erro ao conectar com o servidor.");
+
+      showToast(
+        isEdit 
+          ? `Usuário "${userNameInput}" atualizado com sucesso!` 
+          : `Usuário "${userNameInput}" criado com sucesso!`, 
+        "success"
+      );
+
+      setIsUserModalOpen(false);
+      loadUsers();
+    } catch (err: any) {
+      setUserModalError(err.message || "Falha na comunicação com o servidor.");
+    } finally {
+      setUserModalSubmitting(false);
     }
   };
 
   // Update User Role
-  const handleToggleUserRole = async (userId: string, currentRole: string, userName: string) => {
+  const handleToggleUserRole = (userId: string, currentRole: string, userName: string) => {
     if (userId === "admin-default") {
-      alert("O administrador principal padrão não pode ter seu nível de acesso alterado.");
+      showToast("O administrador principal padrão não pode ter seu nível de acesso alterado.", "info");
       return;
     }
 
     const newRole = currentRole === "admin" ? "user" : "admin";
-    if (!window.confirm(`Deseja alterar o nível de acesso de ${userName} para ${newRole.toUpperCase()}?`)) {
-      return;
-    }
+    const roleLabel = newRole === "admin" ? "ADMINISTRADOR" : "USUÁRIO COMUM";
 
-    // Optimistically update local users state
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
+    setConfirmationModal({
+      isOpen: true,
+      title: newRole === "admin" ? "Promover a Administrador" : "Remover Acesso de Admin",
+      message: `Deseja alterar o nível de acesso de "${userName}" para ${roleLabel}?`,
+      confirmText: "Confirmar Alteração",
+      cancelText: "Cancelar",
+      isDanger: newRole !== "admin",
+      onConfirm: async () => {
+        setConfirmationModal(null);
 
-    try {
-      const response = await fetch(`/api/users/${userId}/role`, {
-        method: "PUT",
-        headers: { 
-          "Content-Type": "application/json",
-          "x-user-email": currentUser?.email || ""
-        },
-        body: JSON.stringify({ role: newRole })
-      });
+        // Optimistically update local users state
+        setUsers(prev => prev.map(u => (u.id === userId || (u.email && u.email.toLowerCase() === userId.toLowerCase())) ? { ...u, role: newRole } : u));
 
-      if (response.ok) {
-        loadUsers();
-      } else {
-        const err = await response.json().catch(() => ({}));
-        alert(`Erro ao alterar nível de acesso: ${err.error || "Ação não permitida"}`);
-        loadUsers();
+        try {
+          const response = await fetch(`/api/users/${encodeURIComponent(userId)}/role`, {
+            method: "PUT",
+            headers: { 
+              "Content-Type": "application/json",
+              "x-user-email": currentUser?.email || ""
+            },
+            body: JSON.stringify({ role: newRole })
+          });
+
+          const data = await response.json();
+
+          if (response.ok && data.success) {
+            showToast(`Nível de acesso de "${userName}" alterado para ${roleLabel}!`, "success");
+            loadUsers();
+          } else {
+            showToast(`Erro ao alterar nível de acesso: ${data.error || "Ação não permitida"}`, "error");
+            loadUsers();
+          }
+        } catch (e) {
+          showToast("Erro ao conectar ao servidor.", "error");
+          loadUsers();
+        }
       }
-    } catch (e) {
-      alert("Erro ao conectar ao servidor.");
-      loadUsers();
-    }
+    });
   };
 
   // Delete User
-  const handleDeleteUser = async (userId: string, userName: string) => {
+  const handleDeleteUser = (userId: string, userName: string) => {
     if (userId === "admin-default") {
-      alert("O administrador principal padrão não pode ser excluído.");
+      showToast("O administrador principal padrão não pode ser excluído.", "info");
       return;
     }
 
     if (userId === currentUser?.id) {
-      alert("Você não pode excluir a si mesmo enquanto estiver logado.");
+      showToast("Você não pode excluir sua própria conta enquanto estiver logado.", "info");
       return;
     }
 
-    if (!window.confirm(`Deseja remover o usuário ${userName} permanentemente do site?`)) {
-      return;
-    }
+    setConfirmationModal({
+      isOpen: true,
+      title: "Excluir Usuário",
+      message: `Deseja remover o usuário "${userName}" permanentemente do site?`,
+      confirmText: "Sim, Excluir Usuário",
+      cancelText: "Cancelar",
+      isDanger: true,
+      onConfirm: async () => {
+        setConfirmationModal(null);
 
-    // Optimistically remove user from local users state
-    setUsers(prev => prev.filter(u => u.id !== userId));
+        // Optimistically remove user from local users state
+        setUsers(prev => prev.filter(u => u.id !== userId));
 
-    try {
-      const response = await fetch(`/api/users/${userId}`, {
-        method: "DELETE",
-        headers: {
-          "x-user-email": currentUser?.email || ""
+        try {
+          const response = await fetch(`/api/users/${encodeURIComponent(userId)}`, {
+            method: "DELETE",
+            headers: {
+              "x-user-email": currentUser?.email || ""
+            }
+          });
+
+          if (response.ok) {
+            showToast(`Usuário "${userName}" removido com sucesso!`, "success");
+            loadUsers();
+          } else {
+            const err = await response.json().catch(() => ({}));
+            showToast(`Erro ao excluir usuário: ${err.error || "Ação não permitida"}`, "error");
+            loadUsers();
+          }
+        } catch (e) {
+          showToast("Erro ao conectar com o servidor.", "error");
+          loadUsers();
         }
-      });
-
-      if (response.ok) {
-        loadUsers();
-      } else {
-        const err = await response.json().catch(() => ({}));
-        alert(`Erro ao excluir usuário: ${err.error || "Ação não permitida"}`);
-        loadUsers();
       }
-    } catch (e) {
-      alert("Erro ao conectar com o servidor.");
-      loadUsers();
-    }
+    });
   };
 
   // Type Counts
@@ -854,6 +1025,90 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
 
   return (
     <div className="bg-black text-white min-h-screen p-4 md:p-8" id="admin-panel-container">
+      
+      {/* Toast Notification Banner */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className={`fixed top-5 right-5 z-[9999] max-w-md px-5 py-3.5 rounded-2xl shadow-2xl border flex items-center gap-3 ${
+              toast.type === "error"
+                ? "bg-red-950/90 border-red-800 text-red-200"
+                : toast.type === "info"
+                ? "bg-blue-950/90 border-blue-800 text-blue-200"
+                : "bg-emerald-950/90 border-emerald-800 text-emerald-200"
+            }`}
+          >
+            {toast.type === "error" && <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />}
+            {toast.type === "info" && <Shield className="w-5 h-5 text-blue-400 shrink-0" />}
+            {toast.type === "success" && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
+            <span className="text-xs font-bold leading-tight">{toast.text}</span>
+            <button
+              onClick={() => setToast(null)}
+              className="ml-auto text-gray-400 hover:text-white p-1 rounded-lg cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirmation Modal */}
+      <AnimatePresence>
+        {confirmationModal?.isOpen && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-[#0f0f0f] border border-gray-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-5"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className={`p-3 rounded-2xl ${confirmationModal.isDanger ? "bg-red-950/60 border border-red-800 text-red-400" : "bg-blue-950/60 border border-blue-800 text-blue-400"}`}>
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-white text-base leading-snug">{confirmationModal.title}</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">Confirmação do Administrador</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setConfirmationModal(null)}
+                  className="text-gray-400 hover:text-white p-1 rounded-xl bg-gray-900 border border-gray-800 transition-all cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="bg-black/60 border border-gray-900 p-4 rounded-2xl text-xs text-gray-200 leading-relaxed">
+                {confirmationModal.message}
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setConfirmationModal(null)}
+                  className="px-4 py-2.5 rounded-xl border border-gray-800 text-gray-300 hover:text-white hover:bg-gray-900 text-xs font-bold transition-all cursor-pointer"
+                >
+                  {confirmationModal.cancelText || "Cancelar"}
+                </button>
+                <button
+                  onClick={confirmationModal.onConfirm}
+                  className={`px-5 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer shadow-lg ${
+                    confirmationModal.isDanger
+                      ? "bg-red-600 hover:bg-red-700 text-white shadow-red-600/30"
+                      : "bg-red-600 hover:bg-red-700 text-white shadow-red-600/30"
+                  }`}
+                >
+                  {confirmationModal.confirmText || "Confirmar"}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       
       {/* Header Panel */}
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between border-b border-gray-900 pb-6 mb-8 gap-4">
@@ -1170,23 +1425,104 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
         {/* VIEW 2: USER MANAGEMENT */}
         {activeSubTab === "users" && (
           <div>
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-              <h2 className="text-lg font-bold flex items-center gap-2 text-gray-200">
-                <Users className="w-5 h-5 text-brand-primary" />
-                <span>Gerenciar Usuários Registrados ({filteredUsers.length})</span>
-              </h2>
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
+              <div className="flex items-center gap-3">
+                <h2 className="text-lg font-bold flex items-center gap-2 text-gray-200">
+                  <Users className="w-5 h-5 text-brand-primary" />
+                  <span>Gerenciar Usuários ({filteredUsers.length})</span>
+                </h2>
 
-              {/* User search bar */}
-              <div className="relative w-full sm:w-64">
-                <Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={userSearchTerm}
-                  onChange={(e) => setUserSearchTerm(e.target.value)}
-                  placeholder="Buscar por nome ou e-mail..."
-                  className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-xs pl-9 pr-3 py-2 rounded-xl transition-all"
-                />
+                {/* Filter Pills */}
+                <div className="hidden sm:flex items-center gap-1 bg-[#0c0c0c] border border-gray-900 p-1 rounded-xl">
+                  <button
+                    onClick={() => setUserRoleFilter("todos")}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                      userRoleFilter === "todos"
+                        ? "bg-red-600 text-white shadow-md"
+                        : "text-gray-400 hover:text-white"
+                    }`}
+                  >
+                    Todos
+                  </button>
+                  <button
+                    onClick={() => setUserRoleFilter("admin")}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                      userRoleFilter === "admin"
+                        ? "bg-red-600 text-white shadow-md"
+                        : "text-gray-400 hover:text-white"
+                    }`}
+                  >
+                    Admins
+                  </button>
+                  <button
+                    onClick={() => setUserRoleFilter("user")}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                      userRoleFilter === "user"
+                        ? "bg-red-600 text-white shadow-md"
+                        : "text-gray-400 hover:text-white"
+                    }`}
+                  >
+                    Comuns
+                  </button>
+                </div>
               </div>
+
+              <div className="flex items-center gap-2.5 w-full md:w-auto">
+                {/* User search bar */}
+                <div className="relative flex-grow md:w-64">
+                  <Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={userSearchTerm}
+                    onChange={(e) => setUserSearchTerm(e.target.value)}
+                    placeholder="Buscar por nome ou e-mail..."
+                    className="w-full bg-black border border-gray-900 focus:border-red-600 focus:outline-none text-white text-xs pl-9 pr-3 py-2 rounded-xl transition-all"
+                  />
+                </div>
+
+                {/* Add User Button */}
+                <button
+                  onClick={handleOpenAddUser}
+                  className="px-3.5 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 shadow-lg"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span className="hidden sm:inline">Novo Usuário</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Mobile Filter Pills */}
+            <div className="flex sm:hidden items-center gap-1 bg-[#0c0c0c] border border-gray-900 p-1 rounded-xl mb-4">
+              <button
+                onClick={() => setUserRoleFilter("todos")}
+                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all text-center cursor-pointer ${
+                  userRoleFilter === "todos"
+                    ? "bg-red-600 text-white"
+                    : "text-gray-400"
+                }`}
+              >
+                Todos
+              </button>
+              <button
+                onClick={() => setUserRoleFilter("admin")}
+                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all text-center cursor-pointer ${
+                  userRoleFilter === "admin"
+                    ? "bg-red-600 text-white"
+                    : "text-gray-400"
+                }`}
+              >
+                Admins
+              </button>
+              <button
+                onClick={() => setUserRoleFilter("user")}
+                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all text-center cursor-pointer ${
+                  userRoleFilter === "user"
+                    ? "bg-red-600 text-white"
+                    : "text-gray-400"
+                }`}
+              >
+                Comuns
+              </button>
             </div>
 
             {usersLoading ? (
@@ -1195,7 +1531,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
               </div>
             ) : filteredUsers.length === 0 ? (
               <div className="bg-[#0c0c0c] border border-gray-900 rounded-2xl p-8 text-center text-gray-500 text-xs">
-                Nenhum usuário encontrado para a busca "{userSearchTerm}".
+                Nenhum usuário encontrado.
               </div>
             ) : (
               <div className="space-y-4">
@@ -1229,20 +1565,26 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                             <td className="py-3 px-4 text-right">
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
+                                  onClick={() => handleOpenEditUser(u)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-gray-950 border border-gray-900 hover:border-gray-700 text-gray-300 hover:text-white text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1"
+                                  title="Editar Usuário"
+                                >
+                                  <Edit className="w-3 h-3" />
+                                  <span>Editar</span>
+                                </button>
+                                <button
                                   onClick={() => handleToggleUserRole(u.id, u.role, u.name)}
                                   className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all cursor-pointer ${
                                     u.role === "admin"
                                       ? "bg-gray-950 border-gray-900 text-gray-400 hover:text-white"
                                       : "bg-red-950/20 border-red-900/30 text-red-400 hover:bg-red-900 hover:text-white"
                                   }`}
-                                  disabled={u.id === "admin-default"}
                                 >
-                                  {u.role === "admin" ? "Remover Admin" : "Tornar Admin"}
+                                  {u.role === "admin" ? "Tornar Comum" : "Tornar Admin"}
                                 </button>
                                 <button
                                   onClick={() => handleDeleteUser(u.id, u.name)}
                                   className="px-3 py-1.5 rounded-lg bg-red-950/20 border border-red-900/40 hover:border-red-600 hover:bg-red-900/40 text-red-400 hover:text-white text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1"
-                                  disabled={u.id === "admin-default" || u.id === currentUser?.id}
                                   title="Excluir Usuário"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -1281,24 +1623,28 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
 
                       <div className="pt-2 border-t border-gray-900/60 flex items-center justify-end gap-2">
                         <button
+                          onClick={() => handleOpenEditUser(u)}
+                          className="px-3 py-2 bg-gray-950 border border-gray-900 text-gray-300 text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
+                        >
+                          <Edit className="w-3.5 h-3.5" />
+                          <span>Editar</span>
+                        </button>
+                        <button
                           onClick={() => handleToggleUserRole(u.id, u.role, u.name)}
                           className={`flex-1 text-[11px] font-bold py-2 px-3 rounded-xl border transition-all text-center cursor-pointer ${
                             u.role === "admin"
                               ? "bg-gray-950 border-gray-900 text-gray-400 hover:text-white"
                               : "bg-red-950/20 border-red-900/30 text-red-400 hover:bg-red-900 hover:text-white"
                           }`}
-                          disabled={u.id === "admin-default"}
                         >
-                          {u.role === "admin" ? "Remover Admin" : "Tornar Admin"}
+                          {u.role === "admin" ? "Tornar Comum" : "Tornar Admin"}
                         </button>
                         
                         <button
                           onClick={() => handleDeleteUser(u.id, u.name)}
-                          className="flex-1 bg-red-950/20 border border-red-900/40 hover:bg-red-900/40 text-red-400 hover:text-white text-[11px] font-bold py-2 px-3 rounded-xl transition-all text-center cursor-pointer flex items-center justify-center gap-1.5"
-                          disabled={u.id === "admin-default" || u.id === currentUser?.id}
+                          className="px-3 py-2 bg-red-950/20 border border-red-900/40 hover:bg-red-900/40 text-red-400 hover:text-white text-[11px] font-bold rounded-xl transition-all text-center cursor-pointer flex items-center justify-center gap-1.5"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
-                          <span>Excluir Usuário</span>
                         </button>
                       </div>
                     </div>
@@ -2551,6 +2897,137 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                 )}
 
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* USER MANAGEMENT ADD/EDIT MODAL */}
+      <AnimatePresence>
+        {isUserModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-[#0f0f0f] border border-gray-900 rounded-2xl w-full max-w-md p-6 shadow-2xl relative overflow-hidden"
+            >
+              <div className="flex items-center justify-between pb-4 border-b border-gray-900">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-red-950/40 rounded-xl border border-red-900/40 text-red-400">
+                    <UserPlus className="w-5 h-5" />
+                  </div>
+                  <h3 className="font-bold text-lg text-white">
+                    {editingUser ? "Editar Usuário" : "Adicionar Novo Usuário"}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setIsUserModalOpen(false)}
+                  className="p-1.5 text-gray-400 hover:text-white rounded-lg bg-gray-950 border border-gray-900 transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveUserModal} className="mt-4 space-y-4">
+                {userModalError && (
+                  <div className="p-3 bg-red-950/40 border border-red-900/50 rounded-xl text-red-300 text-xs font-medium">
+                    {userModalError}
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+                    Nome Completo *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={userNameInput}
+                    onChange={(e) => setUserNameInput(e.target.value)}
+                    placeholder="Ex: João Silva"
+                    className="w-full bg-black border border-gray-800 focus:border-red-600 focus:outline-none text-white text-xs px-3.5 py-2.5 rounded-xl transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+                    E-mail de Acesso *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={userEmailInput}
+                    onChange={(e) => setUserEmailInput(e.target.value)}
+                    placeholder="Ex: joao@email.com"
+                    className="w-full bg-black border border-gray-800 focus:border-red-600 focus:outline-none text-white text-xs px-3.5 py-2.5 rounded-xl transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+                    {editingUser ? "Nova Senha (deixe em branco para manter a atual)" : "Senha de Acesso *"}
+                  </label>
+                  <input
+                    type="password"
+                    value={userPasswordInput}
+                    onChange={(e) => setUserPasswordInput(e.target.value)}
+                    placeholder={editingUser ? "••••••••" : "Digite a senha..."}
+                    className="w-full bg-black border border-gray-800 focus:border-red-600 focus:outline-none text-white text-xs px-3.5 py-2.5 rounded-xl transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+                    Nível de Acesso (Papel)
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setUserRoleInput("user")}
+                      className={`p-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                        userRoleInput === "user"
+                          ? "bg-gray-800 border-gray-600 text-white shadow-lg"
+                          : "bg-black border-gray-900 text-gray-500 hover:text-gray-300"
+                      }`}
+                    >
+                      <User className="w-4 h-4" />
+                      <span>Usuário Comum</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setUserRoleInput("admin")}
+                      className={`p-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                        userRoleInput === "admin"
+                          ? "bg-red-950/60 border-red-700 text-red-300 shadow-lg"
+                          : "bg-black border-gray-900 text-gray-500 hover:text-gray-300"
+                      }`}
+                    >
+                      <Shield className="w-4 h-4" />
+                      <span>Administrador</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-4 flex items-center justify-end gap-2 border-t border-gray-900">
+                  <button
+                    type="button"
+                    onClick={() => setIsUserModalOpen(false)}
+                    className="px-4 py-2 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={userModalSubmitting}
+                    className="px-5 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {userModalSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    <span>{editingUser ? "Salvar Alterações" : "Criar Usuário"}</span>
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}
