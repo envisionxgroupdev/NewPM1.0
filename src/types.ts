@@ -41,3 +41,13 @@ export interface User {
   email: string;
   role?: "user" | "admin";
 }
+
+export interface ContinueWatchingItem {
+  movieId: string;
+  movie: Movie;
+  updatedAt: number;
+  playerType: "superflix" | "warez" | "trailer";
+  season?: number;
+  episode?: number;
+  progressPercent: number;
+}

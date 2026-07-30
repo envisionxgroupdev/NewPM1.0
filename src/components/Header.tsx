@@ -127,7 +127,7 @@ export default function Header({
       </div>
 
       {/* Tabs / Navigation */}
-      <nav className="flex flex-wrap items-center justify-center gap-1 md:gap-2 bg-[#141414]/90 p-1.5 rounded-full border border-gray-800">
+      <nav className="flex items-center justify-start sm:justify-center gap-1 md:gap-2 bg-[#141414]/90 p-1.5 rounded-full border border-gray-800 max-w-full overflow-x-auto no-scrollbar shrink-0">
         <button
           onClick={() => {
             setActiveTab("home");
@@ -318,12 +318,36 @@ export default function Header({
                   <div className="max-h-80 sm:max-h-[400px] overflow-y-auto divide-y divide-gray-900/80 p-2 space-y-1.5 flex-1">
                     {notifications.length > 0 ? (
                       notifications.map((notif) => {
-                        // Check if this notification references a movie
+                        // Check if this notification references a movie (by ID, attached movieId, or title match)
                         const matchedMovie = movies.find(
                           (m) =>
+                            (notif.movieId && m.id === notif.movieId) ||
                             notif.reportId === m.id ||
                             (notif.message && notif.message.toLowerCase().includes(m.title.toLowerCase()))
                         );
+
+                        // Determine style and badge based on notification type
+                        let icon = <CheckCircle2 className="w-4 h-4 text-emerald-400" />;
+                        let iconBg = "bg-emerald-950/80 border-emerald-800/60";
+                        let badgeText = notif.status || "Aviso";
+                        let badgeStyle = "text-emerald-400 bg-emerald-950 border-emerald-800/80";
+
+                        if (notif.type === "alert" || notif.type === "warning") {
+                          icon = <Info className="w-4 h-4 text-amber-400" />;
+                          iconBg = "bg-amber-950/80 border-amber-800/60";
+                          badgeText = "Aviso ⚠️";
+                          badgeStyle = "text-amber-400 bg-amber-950 border-amber-800/80";
+                        } else if (notif.type === "success") {
+                          icon = <CheckCircle2 className="w-4 h-4 text-emerald-400" />;
+                          iconBg = "bg-emerald-950/80 border-emerald-800/60";
+                          badgeText = "Novidade 🎉";
+                          badgeStyle = "text-emerald-400 bg-emerald-950 border-emerald-800/80";
+                        } else if (notif.type === "info" || notif.target === "all") {
+                          icon = <Bell className="w-4 h-4 text-sky-400" />;
+                          iconBg = "bg-sky-950/80 border-sky-800/60";
+                          badgeText = notif.target === "all" ? "Geral 📢" : "Info ℹ️";
+                          badgeStyle = "text-sky-400 bg-sky-950 border-sky-800/80";
+                        }
 
                         return (
                           <div
@@ -336,24 +360,24 @@ export default function Header({
                             }}
                             className={`p-3 rounded-xl transition-all ${
                               !notif.read
-                                ? "bg-amber-950/30 border-l-4 border-amber-500"
+                                ? "bg-amber-950/30 border-l-4 border-amber-500 shadow-md shadow-amber-500/10"
                                 : "bg-gray-950/40 hover:bg-gray-900/60"
                             } ${matchedMovie ? "cursor-pointer hover:border-amber-500/40" : ""}`}
                           >
                             <div className="flex items-start gap-2.5">
-                              <div className="p-1.5 bg-emerald-950/80 border border-emerald-800/60 text-emerald-400 rounded-lg shrink-0 mt-0.5">
-                                <CheckCircle2 className="w-4 h-4" />
+                              <div className={`p-1.5 border rounded-lg shrink-0 mt-0.5 ${iconBg}`}>
+                                {icon}
                               </div>
                               <div className="space-y-1 text-left flex-grow min-w-0">
                                 <div className="flex items-center justify-between gap-2">
                                   <h5 className="font-extrabold text-xs text-white leading-snug break-words">
                                     {notif.title}
                                   </h5>
-                                  <span className="text-[9px] font-bold text-emerald-400 bg-emerald-950 border border-emerald-800/80 px-1.5 py-0.5 rounded shrink-0">
-                                    Resolvido
+                                  <span className={`text-[9px] font-bold border px-1.5 py-0.5 rounded shrink-0 ${badgeStyle}`}>
+                                    {badgeText}
                                   </span>
                                 </div>
-                                <p className="text-[11px] text-gray-300 leading-relaxed break-words">
+                                <p className="text-[11px] text-gray-300 leading-relaxed break-words whitespace-pre-wrap">
                                   {notif.message}
                                 </p>
                                 {matchedMovie && (
@@ -362,11 +386,11 @@ export default function Header({
                                   </span>
                                 )}
                                 <span className="text-[9px] font-mono text-gray-500 block pt-0.5">
-                                  {new Date(notif.createdAt).toLocaleDateString("pt-BR")} às{" "}
-                                  {new Date(notif.createdAt).toLocaleTimeString("pt-BR", {
+                                  {notif.createdAt ? new Date(notif.createdAt).toLocaleDateString("pt-BR") : "Hoje"} às{" "}
+                                  {notif.createdAt ? new Date(notif.createdAt).toLocaleTimeString("pt-BR", {
                                     hour: "2-digit",
                                     minute: "2-digit",
-                                  })}
+                                  }) : ""}
                                 </span>
                               </div>
                             </div>
@@ -378,7 +402,7 @@ export default function Header({
                         <Bell className="w-6 h-6 text-gray-700 mx-auto mb-2" />
                         <p className="font-semibold text-gray-400">Nenhuma notificação</p>
                         <p className="text-[10px] text-gray-600">
-                          Quando seus relatos de bugs forem resolvidos, você será avisado aqui!
+                          Você está em dia! Quando houver novidades ou avisos da equipe, eles aparecerão aqui.
                         </p>
                       </div>
                     )}

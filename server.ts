@@ -294,32 +294,14 @@ async function fetchUsersFromDb() {
   const db = getFirestoreDb();
   let mapped: any[] = [];
 
-  const defaultAdmins = [
-    {
-      id: "admin-default",
-      name: "Administrador PipocaMax",
-      email: "admin@pipocamax.com",
-      password: "admin",
-      role: "admin",
-      createdAt: new Date().toISOString()
-    },
-    {
-      id: "admin-hylander",
-      name: "Hylander Admin",
-      email: "hylander@hylander.com",
-      password: "admin",
-      role: "admin",
-      createdAt: new Date().toISOString()
-    },
-    {
-      id: "admin-higor",
-      name: "Higor Juliatti (Admin)",
-      email: "higorjuliatti159@gmail.com",
-      password: "admin",
-      role: "admin",
-      createdAt: new Date().toISOString()
-    }
-  ];
+  const rootAdmin = {
+    id: "admin-default",
+    name: "Administrador PipocaMax",
+    email: "admin@pipocamax.com",
+    password: "admin",
+    role: "admin",
+    createdAt: new Date().toISOString()
+  };
 
   if (db) {
     try {
@@ -337,11 +319,9 @@ async function fetchUsersFromDb() {
           });
         });
 
-        // Ensure default admins exist in mapped if missing from Firestore collection
-        for (const defAdmin of defaultAdmins) {
-          if (!mapped.some(u => u.email && u.email.toLowerCase().trim() === defAdmin.email)) {
-            mapped.push(defAdmin);
-          }
+        // Ensure root fallback admin exists in mapped if missing from Firestore collection
+        if (!mapped.some(u => u.email && u.email.toLowerCase().trim() === rootAdmin.email)) {
+          mapped.push(rootAdmin);
         }
 
         localUsersList = mapped;
@@ -352,11 +332,9 @@ async function fetchUsersFromDb() {
     }
   }
 
-  // Ensure localUsersList has default admins
-  for (const defAdmin of defaultAdmins) {
-    if (!localUsersList.some(u => u.email && u.email.toLowerCase().trim() === defAdmin.email)) {
-      localUsersList.push(defAdmin);
-    }
+  // Ensure localUsersList has root fallback admin if list is empty or missing
+  if (!localUsersList.some(u => u.email && u.email.toLowerCase().trim() === rootAdmin.email)) {
+    localUsersList.push(rootAdmin);
   }
 
   return localUsersList;
@@ -1216,14 +1194,19 @@ async function startServer() {
       // Sync latest DB users first
       await fetchUsersFromDb();
 
-      // Update in memory
+      // Find user in memory
       let targetUser = localUsersList.find(
         u => u.id === id || (u.email && u.email.trim().toLowerCase() === id.trim().toLowerCase())
       );
 
-      if (targetUser) {
-        targetUser.role = targetRole;
-      }
+      const targetEmail = (targetUser?.email || (id.includes("@") ? id : "")).trim().toLowerCase();
+
+      // Update in local memory
+      localUsersList.forEach(u => {
+        if (u.id === id || (targetEmail && u.email && u.email.trim().toLowerCase() === targetEmail)) {
+          u.role = targetRole;
+        }
+      });
 
       // Save to Firestore
       const db = getFirestoreDb();
@@ -1237,12 +1220,13 @@ async function startServer() {
           }
 
           // Also check by email
-          const targetEmail = (targetUser?.email || id).trim().toLowerCase();
-          const querySnap = await db.collection("users").where("email", "==", targetEmail).get();
-          if (!querySnap.empty) {
-            querySnap.forEach(async (docSnap: any) => {
-              await db.collection("users").doc(docSnap.id).set({ role: targetRole }, { merge: true });
-            });
+          if (targetEmail) {
+            const querySnap = await db.collection("users").where("email", "==", targetEmail).get();
+            if (!querySnap.empty) {
+              for (const docSnap of querySnap.docs) {
+                await db.collection("users").doc(docSnap.id).set({ role: targetRole }, { merge: true });
+              }
+            }
           }
           console.log(`Papel do usuário ${id} (${targetEmail}) alterado para ${targetRole} no Firestore.`);
         } catch (e) {
@@ -1294,6 +1278,15 @@ async function startServer() {
           if (user.password) updateData.password = user.password;
 
           await db.collection("users").doc(user.id).set(updateData, { merge: true });
+
+          if (user.email) {
+            const querySnap = await db.collection("users").where("email", "==", user.email).get();
+            if (!querySnap.empty) {
+              for (const docSnap of querySnap.docs) {
+                await db.collection("users").doc(docSnap.id).set(updateData, { merge: true });
+              }
+            }
+          }
         } catch (e) {
           console.warn("Erro ao atualizar dados do usuário no Firestore:", e);
         }
@@ -1325,9 +1318,11 @@ async function startServer() {
         u => u.id === id || (u.email && u.email.trim().toLowerCase() === id.trim().toLowerCase())
       );
 
+      const targetEmail = (targetUser?.email || (id.includes("@") ? id : "")).trim().toLowerCase();
+
       // Update in memory
       localUsersList = localUsersList.filter(
-        u => u.id !== id && (!u.email || u.email.trim().toLowerCase() !== id.trim().toLowerCase())
+        u => u.id !== id && (!u.email || u.email.trim().toLowerCase() !== id.trim().toLowerCase()) && (!targetEmail || u.email.trim().toLowerCase() !== targetEmail)
       );
 
       // Save to database
@@ -1339,12 +1334,13 @@ async function startServer() {
             await db.collection("users").doc(targetUser.id).delete();
           }
 
-          const targetEmail = (targetUser?.email || id).trim().toLowerCase();
-          const querySnap = await db.collection("users").where("email", "==", targetEmail).get();
-          if (!querySnap.empty) {
-            querySnap.forEach(async (docSnap: any) => {
-              await db.collection("users").doc(docSnap.id).delete();
-            });
+          if (targetEmail) {
+            const querySnap = await db.collection("users").where("email", "==", targetEmail).get();
+            if (!querySnap.empty) {
+              for (const docSnap of querySnap.docs) {
+                await db.collection("users").doc(docSnap.id).delete();
+              }
+            }
           }
         } catch (e) {
           console.warn("Erro ao remover usuário no Firestore:", e);
@@ -1535,7 +1531,7 @@ async function startServer() {
     }
   });
 
-  // Notifications API: Get user notifications
+  // Notifications API: Get user notifications (supports broadcast "all" and targeted messages)
   app.get("/api/notifications/my", async (req, res) => {
     try {
       const email = req.query.email ? String(req.query.email).toLowerCase() : "";
@@ -1543,8 +1539,33 @@ async function startServer() {
         return res.status(400).json({ error: "E-mail do usuário é obrigatório." });
       }
 
+      const users = await fetchUsersFromDb();
+      const currentUser = users.find(u => u.email && u.email.trim().toLowerCase() === email);
+      const isUserAdmin = currentUser?.role === "admin";
+
       const all = await fetchNotificationsFromDb();
-      const userNotifs = all.filter(n => n.userEmail && n.userEmail.toLowerCase() === email);
+      
+      const userNotifs = all
+        .filter(n => {
+          if (!n) return false;
+          const nEmail = (n.userEmail || "").toLowerCase();
+          const target = n.target || "all";
+
+          if (nEmail === email) return true;
+          if (nEmail === "all" || target === "all") return true;
+          if (target === "admins" && isUserAdmin) return true;
+          if (target === "users" && !isUserAdmin) return true;
+          return false;
+        })
+        .map(n => {
+          const readBy = Array.isArray(n.readBy) ? n.readBy : [];
+          const isRead = Boolean(n.read) || readBy.includes(email);
+          return {
+            ...n,
+            read: isRead
+          };
+        })
+        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
 
       res.json({ notifications: userNotifs });
     } catch (err) {
@@ -1562,9 +1583,15 @@ async function startServer() {
       }
 
       const emailLower = email.toLowerCase();
+      
       localNotificationsList.forEach(n => {
         if (n.userEmail && n.userEmail.toLowerCase() === emailLower) {
           n.read = true;
+        } else if (n.userEmail === "all" || n.target === "all" || n.target === "admins" || n.target === "users") {
+          if (!Array.isArray(n.readBy)) n.readBy = [];
+          if (!n.readBy.includes(emailLower)) {
+            n.readBy.push(emailLower);
+          }
         }
       });
 
@@ -1578,6 +1605,13 @@ async function startServer() {
               const data = docSnap.data ? docSnap.data() : {};
               if (data && data.userEmail && data.userEmail.toLowerCase() === emailLower) {
                 updatePromises.push(db.collection("notifications").doc(docSnap.id).update({ read: true }));
+              } else if (data && (data.userEmail === "all" || data.target === "all" || data.target === "admins" || data.target === "users")) {
+                const currentReadBy = Array.isArray(data.readBy) ? data.readBy : [];
+                if (!currentReadBy.includes(emailLower)) {
+                  updatePromises.push(db.collection("notifications").doc(docSnap.id).update({
+                    readBy: [...currentReadBy, emailLower]
+                  }));
+                }
               }
             });
             await Promise.all(updatePromises);
@@ -1591,6 +1625,102 @@ async function startServer() {
     } catch (err) {
       console.error("Erro ao marcar notificações como lidas:", err);
       res.status(500).json({ error: "Erro ao atualizar notificações." });
+    }
+  });
+
+  // Admin API: Broadcast / Send Notification to all or target users (Requires Admin)
+  app.post("/api/admin/notifications/broadcast", requireAdmin, async (req, res) => {
+    try {
+      const { title, message, target = "all", targetEmail, type = "info", movieId, movieTitle } = req.body;
+
+      if (!title || !message) {
+        return res.status(400).json({ error: "Título e mensagem da notificação são obrigatórios." });
+      }
+
+      const allUsers = await fetchUsersFromDb();
+
+      let recipientCount = allUsers.length;
+      if (target === "users") {
+        recipientCount = allUsers.filter(u => u.role !== "admin").length;
+      } else if (target === "admins") {
+        recipientCount = allUsers.filter(u => u.role === "admin").length;
+      } else if (target === "specific") {
+        recipientCount = 1;
+      }
+
+      const newNotification = {
+        id: "notif_bc_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5),
+        userEmail: target === "specific" && targetEmail ? targetEmail.toLowerCase() : "all",
+        target: target, // "all" | "users" | "admins" | "specific"
+        title: title.trim(),
+        message: message.trim(),
+        type: type, // "info" | "success" | "warning" | "alert"
+        movieId: movieId || "",
+        movieTitle: movieTitle || "",
+        read: false,
+        readBy: [],
+        createdBy: req.headers["x-user-email"] || "Administrador",
+        createdAt: new Date().toISOString()
+      };
+
+      // Store in memory
+      localNotificationsList.unshift(newNotification);
+
+      // Save to Firestore
+      const db = getFirestoreDb();
+      if (db) {
+        try {
+          await db.collection("notifications").doc(newNotification.id).set(newNotification);
+          console.log(`Notificação enviada com sucesso! Alvo: ${target}, Destinatários estimados: ${recipientCount}`);
+        } catch (e) {
+          console.warn("Erro ao salvar notificação broadcast no Firestore:", e);
+        }
+      }
+
+      res.status(201).json({
+        success: true,
+        message: "Notificação enviada com sucesso!",
+        notification: newNotification,
+        recipientCount
+      });
+    } catch (err) {
+      console.error("Erro ao enviar notificação broadcast:", err);
+      res.status(500).json({ error: "Erro interno ao enviar notificação." });
+    }
+  });
+
+  // Admin API: List all broadcast notifications sent by admins
+  app.get("/api/admin/notifications", requireAdmin, async (_req, res) => {
+    try {
+      const all = await fetchNotificationsFromDb();
+      const sorted = [...all].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      res.json({ notifications: sorted });
+    } catch (err) {
+      console.error("Erro ao listar histórico de notificações:", err);
+      res.status(500).json({ error: "Erro ao carregar histórico de notificações." });
+    }
+  });
+
+  // Admin API: Delete a notification from history (Requires Admin)
+  app.delete("/api/admin/notifications/:id", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      localNotificationsList = localNotificationsList.filter(n => n.id !== id);
+
+      const db = getFirestoreDb();
+      if (db) {
+        try {
+          await db.collection("notifications").doc(id).delete();
+        } catch (e) {
+          console.warn("Erro ao excluir notificação no Firestore:", e);
+        }
+      }
+
+      res.json({ success: true, message: "Notificação excluída com sucesso!" });
+    } catch (err) {
+      console.error("Erro ao excluir notificação:", err);
+      res.status(500).json({ error: "Erro ao excluir notificação." });
     }
   });
 

@@ -3,7 +3,8 @@ import {
   Film, Tv, Sparkles, Plus, Edit, Trash2, Shield, Users, Check, X,
   FileSpreadsheet, Database, Sparkle, AlertTriangle, Loader2, Settings,
   Search, Filter, RotateCcw, Star, Zap, CheckCircle2,
-  Eye, EyeOff, Play, Square, Flag, Clock, UserPlus, User
+  Eye, EyeOff, Play, Square, Flag, Clock, UserPlus, User,
+  Bell, Send, Radio
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -19,9 +20,20 @@ interface AdminPanelProps {
 }
 
 export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: AdminPanelProps) {
-  const [activeSubTab, setActiveSubTab] = useState<"catalog" | "users" | "reports" | "stats" | "settings">("catalog");
+  const [activeSubTab, setActiveSubTab] = useState<"catalog" | "users" | "notifications" | "reports" | "stats" | "settings">("catalog");
   const [users, setUsers] = useState<any[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
+
+  // Notification states
+  const [notifTitle, setNotifTitle] = useState("");
+  const [notifMessage, setNotifMessage] = useState("");
+  const [notifTarget, setNotifTarget] = useState<"all" | "users" | "admins" | "specific">("all");
+  const [notifTargetEmail, setNotifTargetEmail] = useState("");
+  const [notifType, setNotifType] = useState<"info" | "success" | "warning" | "alert">("info");
+  const [notifAttachedMovieId, setNotifAttachedMovieId] = useState("");
+  const [notifSubmitting, setNotifSubmitting] = useState(false);
+  const [sentNotifications, setSentNotifications] = useState<any[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
 
   // Reports states
   const [reports, setReports] = useState<any[]>([]);
@@ -582,11 +594,115 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
     }
   };
 
+  // Load sent notifications history
+  const loadSentNotifications = async () => {
+    setNotificationsLoading(true);
+    try {
+      const response = await fetch("/api/admin/notifications", {
+        headers: {
+          "x-user-email": currentUser?.email || ""
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setSentNotifications(data.notifications || []);
+      }
+    } catch (e) {
+      console.warn("Erro ao carregar histórico de notificações:", e);
+    } finally {
+      setNotificationsLoading(false);
+    }
+  };
+
+  const handleSendNotification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!notifTitle.trim() || !notifMessage.trim()) {
+      showToast("Preencha o título e a mensagem da notificação.", "error");
+      return;
+    }
+
+    if (notifTarget === "specific" && !notifTargetEmail.trim()) {
+      showToast("Informe o e-mail do destinatário.", "error");
+      return;
+    }
+
+    setNotifSubmitting(true);
+    try {
+      const selectedMovie = movies.find(m => m.id === notifAttachedMovieId);
+
+      const response = await fetch("/api/admin/notifications/broadcast", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": currentUser?.email || ""
+        },
+        body: JSON.stringify({
+          title: notifTitle.trim(),
+          message: notifMessage.trim(),
+          target: notifTarget,
+          targetEmail: notifTargetEmail.trim(),
+          type: notifType,
+          movieId: notifAttachedMovieId || "",
+          movieTitle: selectedMovie ? selectedMovie.title : ""
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Erro ao enviar notificação.");
+      }
+
+      showToast(`Notificação enviada com sucesso! (${data.recipientCount || "1"} destinatário(s)) 🎉`, "success");
+      setNotifTitle("");
+      setNotifMessage("");
+      setNotifAttachedMovieId("");
+      loadSentNotifications();
+    } catch (err: any) {
+      showToast(err.message || "Falha ao enviar notificação.", "error");
+    } finally {
+      setNotifSubmitting(false);
+    }
+  };
+
+  const handleDeleteNotification = (id: string, title: string) => {
+    setConfirmationModal({
+      isOpen: true,
+      title: "Excluir Notificação do Histórico",
+      message: `Deseja apagar a notificação "${title}" do histórico de envios?`,
+      confirmText: "Sim, Excluir",
+      cancelText: "Cancelar",
+      isDanger: true,
+      onConfirm: async () => {
+        setConfirmationModal(null);
+        try {
+          const response = await fetch(`/api/admin/notifications/${id}`, {
+            method: "DELETE",
+            headers: {
+              "x-user-email": currentUser?.email || ""
+            }
+          });
+
+          if (response.ok) {
+            setSentNotifications(prev => prev.filter(n => n.id !== id));
+            showToast("Notificação excluída com sucesso!", "success");
+          } else {
+            showToast("Erro ao excluir notificação.", "error");
+          }
+        } catch (e) {
+          showToast("Erro de conexão ao excluir.", "error");
+        }
+      }
+    });
+  };
+
   useEffect(() => {
     if (activeSubTab === "users") {
       loadUsers();
     } else if (activeSubTab === "reports") {
       loadReports();
+    } else if (activeSubTab === "notifications") {
+      loadSentNotifications();
     }
   }, [activeSubTab]);
 
@@ -1160,6 +1276,18 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
           </button>
 
           <button
+            onClick={() => setActiveSubTab("notifications")}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0 whitespace-nowrap ${
+              activeSubTab === "notifications"
+                ? "bg-brand-primary text-white shadow-md shadow-red-600/20"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            <Bell className="w-3.5 h-3.5 text-amber-400" />
+            <span>Notificações</span>
+          </button>
+
+          <button
             onClick={() => setActiveSubTab("reports")}
             className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0 whitespace-nowrap relative ${
               activeSubTab === "reports"
@@ -1652,6 +1780,330 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* VIEW: BROADCAST NOTIFICATIONS */}
+        {activeSubTab === "notifications" && (
+          <div className="space-y-6">
+            {/* Header Banner */}
+            <div className="bg-[#0c0c0c] border border-gray-900 p-5 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Bell className="w-5 h-5 text-amber-400 animate-pulse" />
+                  <span>Central de Notificações e Transmissão Geral</span>
+                </h3>
+                <p className="text-xs text-gray-400 mt-1">
+                  Envie mensagens, anúncios, avisos de lançamentos e alertas para todos os usuários do PipocaMax em tempo real.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="bg-black/60 border border-gray-800 px-3.5 py-2 rounded-xl text-center">
+                  <span className="text-[10px] font-bold text-gray-500 uppercase block">Envios Realizados</span>
+                  <span className="text-sm font-black text-amber-400 font-mono">{sentNotifications.length}</span>
+                </div>
+                <div className="bg-black/60 border border-gray-800 px-3.5 py-2 rounded-xl text-center">
+                  <span className="text-[10px] font-bold text-gray-500 uppercase block">Usuários Cadastrados</span>
+                  <span className="text-sm font-black text-emerald-400 font-mono">{users.length || "—"}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Templates / Presets */}
+            <div className="bg-[#0c0c0c] border border-gray-900/80 p-4 rounded-2xl space-y-2">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>Modelos Prontos para Preenchimento Rápido</span>
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNotifTitle("🎬 Novo Lançamento Adicionado!");
+                    setNotifMessage("Adicionamos um novo título em alta qualidade no catálogo do PipocaMax! Confira agora e boa sessão! 🍿");
+                    setNotifType("success");
+                    setNotifTarget("all");
+                  }}
+                  className="bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>🎬 Novo Lançamento</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNotifTitle("🍿 Fim de Semana no PipocaMax");
+                    setNotifMessage("Que tal maratonar os filmes e séries mais populares da semana? Acesse nossa aba de destaques!");
+                    setNotifType("info");
+                    setNotifTarget("all");
+                  }}
+                  className="bg-sky-950/40 hover:bg-sky-900/60 border border-sky-800/60 text-sky-300 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>🍿 Especial Fim de Semana</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNotifTitle("⚡ Aviso de Manutenção Programada");
+                    setNotifMessage("Estamos realizando melhorias em nossos servidores de vídeo para garantir a melhor qualidade de reprodução. O site continuará funcionando normalmente.");
+                    setNotifType("warning");
+                    setNotifTarget("all");
+                  }}
+                  className="bg-amber-950/40 hover:bg-amber-900/60 border border-amber-800/60 text-amber-300 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>⚡ Aviso de Manutenção</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNotifTitle("🎉 Novas Funcionalidades Disponíveis!");
+                    setNotifMessage("Atualizamos a plataforma com suporte a Modo Cinema em tela cheia e acompanhamento de episódios no 'Continue Assistindo'!");
+                    setNotifType("success");
+                    setNotifTarget("all");
+                  }}
+                  className="bg-purple-950/40 hover:bg-purple-900/60 border border-purple-800/60 text-purple-300 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>🚀 Atualização do App</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Compose Notification Form */}
+            <div className="bg-[#0c0c0c] border border-gray-900 p-6 rounded-3xl shadow-xl space-y-5">
+              <div className="flex items-center justify-between border-b border-gray-900 pb-3">
+                <h4 className="font-extrabold text-white text-base flex items-center gap-2">
+                  <Send className="w-4 h-4 text-brand-primary" />
+                  <span>Escrever Notificação para Transmissão</span>
+                </h4>
+                <span className="text-[10px] text-gray-500 font-mono uppercase">Formulário de Envios</span>
+              </div>
+
+              <form onSubmit={handleSendNotification} className="space-y-4">
+                {/* Title and Target */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                  {/* Title */}
+                  <div className="md:col-span-7 space-y-1">
+                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+                      Título do Anúncio / Notificação *
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Novo Filme Adicionado no PipocaMax!"
+                      value={notifTitle}
+                      onChange={(e) => setNotifTitle(e.target.value)}
+                      maxLength={100}
+                      required
+                      className="w-full bg-black border border-gray-900 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-3.5 rounded-xl transition-all"
+                    />
+                  </div>
+
+                  {/* Target Audience */}
+                  <div className="md:col-span-5 space-y-1">
+                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+                      Público Alvo (Destinatários)
+                    </label>
+                    <select
+                      value={notifTarget}
+                      onChange={(e: any) => setNotifTarget(e.target.value)}
+                      className="w-full bg-black border border-gray-900 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-3 rounded-xl transition-all cursor-pointer font-semibold"
+                    >
+                      <option value="all">📢 Todos os Usuários do Site</option>
+                      <option value="users">👤 Apenas Usuários Comuns</option>
+                      <option value="admins">🛡️ Apenas Administradores</option>
+                      <option value="specific">✉️ Usuário Específico (Por E-mail)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Specific Target Email if selected */}
+                {notifTarget === "specific" && (
+                  <div className="space-y-1 bg-black/50 border border-amber-900/40 p-3 rounded-2xl animate-fadeIn">
+                    <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block">
+                      E-mail do Usuário Específico *
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="Ex: usuario@email.com"
+                      value={notifTargetEmail}
+                      onChange={(e) => setNotifTargetEmail(e.target.value)}
+                      required
+                      className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all font-mono"
+                    />
+                  </div>
+                )}
+
+                {/* Notification Message Content */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+                    Mensagem / Conteúdo do Anúncio *
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Escreva a mensagem clara e amigável que aparecerá para os usuários na central de notificações..."
+                    value={notifMessage}
+                    onChange={(e) => setNotifMessage(e.target.value)}
+                    required
+                    className="w-full bg-black border border-gray-900 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-3.5 rounded-xl transition-all resize-none"
+                  />
+                </div>
+
+                {/* Notification Category Type & Optional Movie Link */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Type */}
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+                      Tipo de Estilo da Notificação
+                    </label>
+                    <select
+                      value={notifType}
+                      onChange={(e: any) => setNotifType(e.target.value)}
+                      className="w-full bg-black border border-gray-900 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-3 rounded-xl transition-all cursor-pointer"
+                    >
+                      <option value="info">ℹ️ Informativo (Azul / Padrão)</option>
+                      <option value="success">🎉 Novidade / Sucesso (Verde)</option>
+                      <option value="warning">⚠️ Alerta / Aviso (Amarelo)</option>
+                      <option value="alert">🔥 Urgente / Destaque (Vermelho)</option>
+                    </select>
+                  </div>
+
+                  {/* Optional Attached Movie */}
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+                      Vincular a um Filme/Série (Opcional)
+                    </label>
+                    <select
+                      value={notifAttachedMovieId}
+                      onChange={(e) => setNotifAttachedMovieId(e.target.value)}
+                      className="w-full bg-black border border-gray-900 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-3 rounded-xl transition-all cursor-pointer"
+                    >
+                      <option value="">Nenhum título vinculado</option>
+                      {movies.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.type === "serie" ? "📺" : m.type === "anime" ? "🎌" : "🎬"} {m.title} ({m.year})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Submit Action Button */}
+                <div className="pt-2 flex items-center justify-end">
+                  <button
+                    type="submit"
+                    disabled={notifSubmitting}
+                    className="w-full md:w-auto bg-brand-primary hover:bg-brand-secondary disabled:bg-gray-800 text-white font-extrabold text-xs px-6 py-3 rounded-xl transition-all cursor-pointer shadow-lg shadow-red-600/20 hover:scale-101 flex items-center justify-center gap-2"
+                  >
+                    {notifSubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-white" />
+                        <span>Enviando para os Usuários...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        <span>Disparar Notificação Agora</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Sent Notifications History */}
+            <div className="bg-[#0c0c0c] border border-gray-900 p-6 rounded-3xl shadow-xl space-y-4">
+              <div className="flex items-center justify-between border-b border-gray-900 pb-3">
+                <h4 className="font-extrabold text-white text-base flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-emerald-400" />
+                  <span>Histórico de Notificações Enviadas ({sentNotifications.length})</span>
+                </h4>
+                <button
+                  type="button"
+                  onClick={loadSentNotifications}
+                  className="text-xs text-gray-400 hover:text-white flex items-center gap-1 bg-black border border-gray-800 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Atualizar Lista</span>
+                </button>
+              </div>
+
+              {notificationsLoading ? (
+                <div className="p-8 text-center text-xs text-gray-500">
+                  <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-brand-primary" />
+                  Carregando histórico de notificações...
+                </div>
+              ) : sentNotifications.length > 0 ? (
+                <div className="space-y-3">
+                  {sentNotifications.map((n) => (
+                    <div
+                      key={n.id}
+                      className="bg-black/60 border border-gray-900 hover:border-gray-800 p-4 rounded-2xl transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
+                    >
+                      <div className="space-y-1.5 flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h5 className="font-extrabold text-sm text-white">
+                            {n.title}
+                          </h5>
+                          
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border tracking-wider ${
+                            n.target === "all"
+                              ? "bg-emerald-950/60 border-emerald-800/80 text-emerald-400"
+                              : n.target === "admins"
+                              ? "bg-red-950/60 border-red-800/80 text-red-400"
+                              : "bg-sky-950/60 border-sky-800/80 text-sky-400"
+                          }`}>
+                            {n.target === "all" ? "📢 Todos" : n.target === "users" ? "👤 Usuários" : n.target === "admins" ? "🛡️ Admins" : `✉️ ${n.userEmail}`}
+                          </span>
+
+                          <span className="text-[9px] font-bold text-gray-400 bg-gray-900 border border-gray-800 px-2 py-0.5 rounded">
+                            {n.type === "success" ? "🎉 Sucesso" : n.type === "warning" ? "⚠️ Alerta" : n.type === "alert" ? "🔥 Destaque" : "ℹ️ Info"}
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap">
+                          {n.message}
+                        </p>
+
+                        {n.movieTitle && (
+                          <div className="text-[11px] font-bold text-amber-400 flex items-center gap-1">
+                            <span>🎬 Título Vinculado:</span>
+                            <span className="underline">{n.movieTitle}</span>
+                          </div>
+                        )}
+
+                        <div className="text-[10px] text-gray-500 flex flex-wrap items-center gap-3 pt-1 border-t border-gray-900/60">
+                          <span>Enviado por: <strong className="text-gray-300">{n.createdBy || "Admin"}</strong></span>
+                          <span>•</span>
+                          <span>{n.createdAt ? new Date(n.createdAt).toLocaleDateString("pt-BR") : "Recentemente"} às {n.createdAt ? new Date(n.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                          {Array.isArray(n.readBy) && n.readBy.length > 0 && (
+                            <>
+                              <span>•</span>
+                              <span className="text-emerald-400 font-bold">Lido por {n.readBy.length} usuário(s)</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteNotification(n.id, n.title)}
+                        className="text-red-400 hover:text-white bg-red-950/30 hover:bg-red-900/60 border border-red-900/40 p-2.5 rounded-xl transition-all cursor-pointer shrink-0 self-end md:self-center"
+                        title="Excluir notificação do histórico"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-8 text-center text-gray-500 text-xs bg-black/40 border border-gray-900 rounded-2xl">
+                  <Bell className="w-8 h-8 text-gray-700 mx-auto mb-2" />
+                  Nenhuma notificação foi enviada ainda. Use o formulário acima para disparar seu primeiro aviso para os usuários!
+                </div>
+              )}
+            </div>
           </div>
         )}
 

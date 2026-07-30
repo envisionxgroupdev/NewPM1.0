@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Movie } from "./types";
+import { Movie, ContinueWatchingItem } from "./types";
 import { MOVIES_DATA } from "./moviesData";
 import Header from "./components/Header";
 import HeroCarousel from "./components/HeroCarousel";
 import MovieCard from "./components/MovieCard";
 import NetflixRow from "./components/NetflixRow";
+import ContinueWatchingRow from "./components/ContinueWatchingRow";
 import MovieModal from "./components/MovieModal";
 import AuthModal from "./components/AuthModal";
 import ReportModal from "./components/ReportModal";
@@ -12,6 +13,12 @@ import ReportWebsiteBugModal from "./components/ReportWebsiteBugModal";
 import ProfileModal from "./components/ProfileModal";
 import AdminPanel from "./components/AdminPanel";
 import { useUserSync } from "./hooks/useUserSync";
+import {
+  getContinueWatchingList,
+  removeContinueWatching,
+  clearContinueWatching,
+  CONTINUE_WATCHING_EVENT,
+} from "./utils/continueWatching";
 import { Film, Bookmark, Zap, AlertCircle, Tv, Flame, Star, Clapperboard, Heart, ArrowRight, Bug } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -31,6 +38,51 @@ export default function App() {
   const [reportMovieTarget, setReportMovieTarget] = useState<Movie | null>(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [visibleGridLimit, setVisibleGridLimit] = useState(20);
+  const [continueWatchingItems, setContinueWatchingItems] = useState<ContinueWatchingItem[]>([]);
+  const [modalResumeParams, setModalResumeParams] = useState<{
+    playerType?: "none" | "trailer" | "superflix" | "warez";
+    season?: number;
+    episode?: number;
+    cinemaMode?: boolean;
+  }>({});
+
+  // Sync Continue Watching items from localStorage
+  const refreshContinueWatching = () => {
+    const list = getContinueWatchingList();
+    const updatedList = list
+      .map((item) => {
+        const foundMovie = movies.find((m) => m.id === item.movieId);
+        return foundMovie ? { ...item, movie: foundMovie } : item;
+      })
+      .filter((item) => item.movie);
+    setContinueWatchingItems(updatedList);
+  };
+
+  useEffect(() => {
+    refreshContinueWatching();
+    const handleUpdate = () => refreshContinueWatching();
+    window.addEventListener(CONTINUE_WATCHING_EVENT, handleUpdate);
+    return () => window.removeEventListener(CONTINUE_WATCHING_EVENT, handleUpdate);
+  }, [movies]);
+
+  const handleSelectContinueWatching = (movie: Movie, item?: ContinueWatchingItem) => {
+    setSelectedMovie(movie);
+    setModalResumeParams({
+      playerType: item?.playerType || "superflix",
+      season: item?.season || 1,
+      episode: item?.episode || 1,
+      cinemaMode: true,
+    });
+  };
+
+  const handleRemoveContinueWatching = (movieId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    removeContinueWatching(movieId);
+  };
+
+  const handleClearAllContinueWatching = () => {
+    clearContinueWatching();
+  };
 
   // Reset grid items limit when filters or active tab change
   useEffect(() => {
@@ -152,6 +204,7 @@ export default function App() {
 
   const handleMovieClick = (movie: Movie) => {
     setSelectedMovie(movie);
+    setModalResumeParams({});
   };
 
   // Identify recently added movies based on database createdAt dates (within the last 7 days)
@@ -328,6 +381,16 @@ export default function App() {
           {/* NETFLIX-STYLE HOMEPAGE ROWS (When on Home tab with 'Tudo' genre and no search) */}
           {isNetflixHomeView ? (
             <div className="space-y-4">
+              {/* Continue Watching Row (If User Has Items In Progress) */}
+              {continueWatchingItems.length > 0 && (
+                <ContinueWatchingRow
+                  items={continueWatchingItems}
+                  onSelect={handleSelectContinueWatching}
+                  onRemove={handleRemoveContinueWatching}
+                  onClearAll={handleClearAllContinueWatching}
+                />
+              )}
+
               {/* Row 0: Minha Lista (If User Has Favorites) */}
               {favoriteMoviesList.length > 0 && (
                 <NetflixRow
@@ -588,10 +651,17 @@ export default function App() {
           <MovieModal
             movie={selectedMovie}
             allMovies={movies}
-            onClose={() => setSelectedMovie(null)}
+            onClose={() => {
+              setSelectedMovie(null);
+              setModalResumeParams({});
+            }}
             isFavorite={favorites.includes(selectedMovie.id)}
             onToggleFavorite={(m) => handleToggleFavorite(m)}
             onMovieClick={handleMovieClick}
+            initialPlayerType={modalResumeParams.playerType}
+            initialSeason={modalResumeParams.season}
+            initialEpisode={modalResumeParams.episode}
+            initialCinemaMode={modalResumeParams.cinemaMode}
             onOpenReport={(m) => {
               if (!currentUser) {
                 setIsAuthModalOpen(true);
