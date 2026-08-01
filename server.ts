@@ -384,6 +384,29 @@ async function initializeUsersTable() {
   }
 }
 
+// Ordena títulos do mais recente para o mais antigo pelo ano (ex: 2026 -> 2025 -> 2024)
+function sortMoviesByYearDesc(list: any[]): any[] {
+  if (!Array.isArray(list)) return [];
+  return [...list].sort((a, b) => {
+    const yearA = Number(a.year || 0);
+    const yearB = Number(b.year || 0);
+    if (yearB !== yearA) {
+      return yearB - yearA;
+    }
+    const featA = a.featured ? 1 : 0;
+    const featB = b.featured ? 1 : 0;
+    if (featB !== featA) {
+      return featB - featA;
+    }
+    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    if (!isNaN(timeB) && !isNaN(timeA) && timeB !== timeA) {
+      return timeB - timeA;
+    }
+    return (b.rating || 0) - (a.rating || 0);
+  });
+}
+
 // Function to fetch titles from Firestore
 async function fetchTitlesFromDb() {
   const db = getFirestoreDb();
@@ -526,9 +549,10 @@ async function startServer() {
     try {
       const dbMovies = await fetchTitlesFromDb();
       const hasFirestore = !!getFirestoreDb();
+      const sorted = sortMoviesByYearDesc(dbMovies || localMoviesList);
       
       return res.json({
-        movies: dbMovies || localMoviesList,
+        movies: sorted,
         dbStatus: hasFirestore ? "firestore" : "fallback",
         dbConfigured: hasFirestore
       });
@@ -536,7 +560,7 @@ async function startServer() {
       console.error("Erro ao carregar títulos do banco de dados:", err);
       const hasFirestore = !!getFirestoreDb();
       res.json({
-        movies: localMoviesList,
+        movies: sortMoviesByYearDesc(localMoviesList),
         dbStatus: hasFirestore ? "database_error" : "fallback",
         dbConfigured: hasFirestore,
         error: err?.message || err
@@ -605,6 +629,88 @@ async function startServer() {
       }
     } catch (err: any) {
       res.status(500).json({ error: "Erro ao salvar as configurações no banco de dados.", details: err.message });
+    }
+  });
+
+  // Maintenance Mode Config (in-memory fallback + Firestore)
+  let localMaintenanceConfig = {
+    enabled: false,
+    title: "Estamos em Manutenção Programada ⚙️",
+    message: "Estamos realizando atualizações e melhorias gerais em nossos servidores e catálogo de mídia para oferecer uma reprodução muito mais estável e veloz. Voltaremos em breve!",
+    estimatedReturn: "Em breve (Algumas horas)",
+    updatedAt: new Date().toISOString(),
+    updatedBy: "Administrador"
+  };
+
+  async function getMaintenanceConfigFromDb() {
+    const db = getFirestoreDb();
+    if (db) {
+      try {
+        const docSnap = await db.collection("settings").doc("maintenance").get();
+        if (docSnap.exists) {
+          const data = docSnap.data();
+          return {
+            enabled: Boolean(data?.enabled),
+            title: data?.title || localMaintenanceConfig.title,
+            message: data?.message || localMaintenanceConfig.message,
+            estimatedReturn: data?.estimatedReturn || localMaintenanceConfig.estimatedReturn,
+            updatedAt: data?.updatedAt || localMaintenanceConfig.updatedAt,
+            updatedBy: data?.updatedBy || localMaintenanceConfig.updatedBy
+          };
+        }
+      } catch (err) {
+        console.warn("Erro ao buscar Modo de Manutenção do Firestore:", err);
+      }
+    }
+    return localMaintenanceConfig;
+  }
+
+  // PUBLIC API: Check system maintenance status (Called by all visitors)
+  app.get("/api/settings/maintenance", async (_req, res) => {
+    try {
+      const maintenance = await getMaintenanceConfigFromDb();
+      res.json({ success: true, maintenance });
+    } catch (err: any) {
+      res.json({ success: true, maintenance: localMaintenanceConfig });
+    }
+  });
+
+  // ADMIN API: Update system maintenance status
+  app.post("/api/settings/maintenance", requireAdmin, async (req, res) => {
+    try {
+      const { enabled, title, message, estimatedReturn } = req.body;
+      const adminEmail = req.headers["x-user-email"] || "Administrador";
+
+      localMaintenanceConfig = {
+        enabled: Boolean(enabled),
+        title: (title || "Estamos em Manutenção Programada ⚙️").trim(),
+        message: (message || "Estamos realizando atualizações e melhorias gerais em nossos servidores. Voltaremos em breve!").trim(),
+        estimatedReturn: (estimatedReturn || "Em breve").trim(),
+        updatedAt: new Date().toISOString(),
+        updatedBy: String(adminEmail)
+      };
+
+      const db = getFirestoreDb();
+      if (db) {
+        try {
+          await db.collection("settings").doc("maintenance").set(localMaintenanceConfig);
+        } catch (e) {
+          console.warn("Aviso ao salvar modo de manutenção no Firestore:", e);
+        }
+      }
+
+      console.log(`Modo de Manutenção alterado para: ${localMaintenanceConfig.enabled ? "LIGADO" : "DESLIGADO"} por ${adminEmail}`);
+
+      res.json({
+        success: true,
+        message: localMaintenanceConfig.enabled
+          ? "Modo de manutenção ATIVADO com sucesso! O site agora está em manutenção para os usuários."
+          : "Modo de manutenção DESATIVADO com sucesso! O site voltou a operar normalmente.",
+        maintenance: localMaintenanceConfig
+      });
+    } catch (err: any) {
+      console.error("Erro ao salvar modo de manutenção:", err);
+      res.status(500).json({ error: "Erro interno ao atualizar modo de manutenção." });
     }
   });
 

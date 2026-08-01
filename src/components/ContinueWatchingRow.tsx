@@ -2,6 +2,7 @@ import React, { useRef } from "react";
 import { ContinueWatchingItem, Movie } from "../types";
 import { Play, RotateCcw, Trash2, ChevronLeft, ChevronRight, Tv, Film, Clock, X } from "lucide-react";
 import { motion } from "motion/react";
+import LazyImage from "./LazyImage";
 
 interface ContinueWatchingRowProps {
   items: ContinueWatchingItem[];
@@ -105,12 +106,15 @@ export default function ContinueWatchingRow({
             >
               {/* Media Thumbnail Container */}
               <div className="relative aspect-video w-full bg-gray-950 overflow-hidden">
-                <img
+                <LazyImage
                   src={movie.backdropUrl || movie.posterUrl}
                   alt={movie.title}
+                  containerClassName="w-full h-full"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 filter brightness-90 group-hover:brightness-100"
-                  referrerPolicy="no-referrer"
                   loading="lazy"
+                  decoding="async"
+                  fetchPriority="low"
+                  rootMargin="300px"
                 />
 
                 {/* Top Overlay Gradient */}

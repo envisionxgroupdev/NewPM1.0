@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { X, User, Mail, Edit2, Bookmark, Flag, CheckCircle2, Clock, AlertCircle, LogIn, Heart, Bug } from "lucide-react";
 import { motion } from "motion/react";
 import { Movie } from "../types";
+import LazyImage from "./LazyImage";
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -425,10 +426,15 @@ export default function ProfileModal({
                       className="bg-black border border-gray-900 rounded-xl overflow-hidden cursor-pointer group hover:border-red-600 transition-all flex flex-col"
                     >
                       <div className="aspect-[2/3] relative overflow-hidden bg-gray-950">
-                        <img
+                        <LazyImage
                           src={movie.posterUrl}
                           alt={movie.title}
+                          containerClassName="w-full h-full"
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          loading="lazy"
+                          decoding="async"
+                          fetchPriority="low"
+                          rootMargin="200px"
                         />
                       </div>
                       <div className="p-2.5">

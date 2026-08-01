@@ -4,7 +4,7 @@ import {
   FileSpreadsheet, Database, Sparkle, AlertTriangle, Loader2, Settings,
   Search, Filter, RotateCcw, Star, Zap, CheckCircle2,
   Eye, EyeOff, Play, Square, Flag, Clock, UserPlus, User,
-  Bell, Send, Radio
+  Bell, Send, Radio, Wrench, ShieldAlert
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -12,6 +12,7 @@ import {
   PieChart, Pie, Cell, AreaChart, Area, CartesianGrid
 } from "recharts";
 import { Movie } from "../types";
+import MaintenanceScreen from "./MaintenanceScreen";
 
 interface AdminPanelProps {
   movies: Movie[];
@@ -68,8 +69,13 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogTypeFilter, setCatalogTypeFilter] = useState<"todos" | "filme" | "serie" | "anime">("todos");
   const [catalogGenreFilter, setCatalogGenreFilter] = useState("todos");
+  const [catalogPage, setCatalogPage] = useState(1);
+  const CATALOG_PAGE_SIZE = 20;
+
   const [userSearchTerm, setUserSearchTerm] = useState("");
   const [userRoleFilter, setUserRoleFilter] = useState<"todos" | "admin" | "user">("todos");
+  const [usersPage, setUsersPage] = useState(1);
+  const USERS_PAGE_SIZE = 20;
 
   // User Add/Edit Modal states
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
@@ -195,6 +201,20 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
     });
   }, [movies, catalogSearch, catalogTypeFilter, catalogGenreFilter]);
 
+  useEffect(() => {
+    setCatalogPage(1);
+  }, [catalogSearch, catalogTypeFilter, catalogGenreFilter]);
+
+  const totalCatalogPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredCatalogMovies.length / CATALOG_PAGE_SIZE)),
+    [filteredCatalogMovies.length, CATALOG_PAGE_SIZE]
+  );
+
+  const paginatedCatalogMovies = useMemo(() => {
+    const startIndex = (catalogPage - 1) * CATALOG_PAGE_SIZE;
+    return filteredCatalogMovies.slice(startIndex, startIndex + CATALOG_PAGE_SIZE);
+  }, [filteredCatalogMovies, catalogPage, CATALOG_PAGE_SIZE]);
+
   // Filtered users for admin panel (strictly deduplicated by ID to ensure unique React keys)
   const filteredUsers = useMemo(() => {
     let list = users;
@@ -218,6 +238,20 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
       return true;
     });
   }, [users, userSearchTerm, userRoleFilter]);
+
+  useEffect(() => {
+    setUsersPage(1);
+  }, [userSearchTerm, userRoleFilter]);
+
+  const totalUsersPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredUsers.length / USERS_PAGE_SIZE)),
+    [filteredUsers.length, USERS_PAGE_SIZE]
+  );
+
+  const paginatedUsers = useMemo(() => {
+    const startIndex = (usersPage - 1) * USERS_PAGE_SIZE;
+    return filteredUsers.slice(startIndex, startIndex + USERS_PAGE_SIZE);
+  }, [filteredUsers, usersPage, USERS_PAGE_SIZE]);
 
   // Stats calculations for Recharts
   const genreData = useMemo(() => {
@@ -268,6 +302,46 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsFeedback, setSettingsFeedback] = useState({ success: "", error: "" });
 
+  // System Maintenance Mode states
+  const [maintEnabled, setMaintEnabled] = useState(false);
+  const [maintTitle, setMaintTitle] = useState("Estamos em Manutenção Programada ⚙️");
+  const [maintMessage, setMaintMessage] = useState("Estamos realizando atualizações e melhorias gerais em nossos servidores e catálogo de mídia para oferecer uma reprodução muito mais estável e veloz. Voltaremos em breve!");
+  const [maintReturn, setMaintReturn] = useState("Em breve (Algumas horas)");
+  const [maintSaving, setMaintSaving] = useState(false);
+  const [maintFeedback, setMaintFeedback] = useState({ success: "", error: "" });
+  const [maintPreviewOpen, setMaintPreviewOpen] = useState(false);
+
+  const handleSaveMaintenanceToDb = async () => {
+    setMaintSaving(true);
+    setMaintFeedback({ success: "", error: "" });
+    try {
+      const response = await fetch("/api/settings/maintenance", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": currentUser?.email || ""
+        },
+        body: JSON.stringify({
+          enabled: maintEnabled,
+          title: maintTitle,
+          message: maintMessage,
+          estimatedReturn: maintReturn
+        })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setMaintFeedback({ success: data.message || "Modo de manutenção atualizado!", error: "" });
+        showToast(data.message || "Modo de manutenção atualizado!", "success");
+      } else {
+        setMaintFeedback({ success: "", error: data.error || "Erro ao atualizar modo de manutenção." });
+      }
+    } catch (err: any) {
+      setMaintFeedback({ success: "", error: "Erro de conexão: " + err.message });
+    } finally {
+      setMaintSaving(false);
+    }
+  };
+
   const handleSaveSettingsToDb = async () => {
     setSavingSettings(true);
     setSettingsFeedback({ success: "", error: "" });
@@ -293,9 +367,9 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
     }
   };
 
-  // Load TMDB API key from database on mount
+  // Load TMDB API key and Maintenance config from database on mount
   useEffect(() => {
-    const fetchTmdbApiKey = async () => {
+    const fetchSettings = async () => {
       try {
         const response = await fetch("/api/settings/tmdb", {
           headers: {
@@ -311,8 +385,23 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
       } catch (err) {
         console.error("Erro ao buscar chave TMDB do banco:", err);
       }
+
+      try {
+        const resMaint = await fetch("/api/settings/maintenance");
+        if (resMaint.ok) {
+          const dataMaint = await resMaint.json();
+          if (dataMaint.maintenance) {
+            setMaintEnabled(Boolean(dataMaint.maintenance.enabled));
+            if (dataMaint.maintenance.title) setMaintTitle(dataMaint.maintenance.title);
+            if (dataMaint.maintenance.message) setMaintMessage(dataMaint.maintenance.message);
+            if (dataMaint.maintenance.estimatedReturn) setMaintReturn(dataMaint.maintenance.estimatedReturn);
+          }
+        }
+      } catch (err) {
+        console.error("Erro ao buscar Modo de Manutenção:", err);
+      }
     };
-    fetchTmdbApiKey();
+    fetchSettings();
   }, []);
 
   // Save TMDB API key to local storage when changed
@@ -1447,14 +1536,14 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-900/40">
-                    {filteredCatalogMovies.length === 0 ? (
+                    {paginatedCatalogMovies.length === 0 ? (
                       <tr>
                         <td colSpan={7} className="py-12 text-center text-gray-500 text-xs">
                           Nenhum título corresponde aos filtros de pesquisa selecionados.
                         </td>
                       </tr>
                     ) : (
-                      filteredCatalogMovies.map((movie) => (
+                      paginatedCatalogMovies.map((movie) => (
                         <tr key={movie.id} className="hover:bg-gray-900/10 transition-colors">
                         {/* Poster */}
                         <td className="py-3 px-4">
@@ -1463,6 +1552,8 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                             alt={movie.title}
                             className="w-10 h-14 object-cover rounded-lg border border-gray-900 shadow-md"
                             referrerPolicy="no-referrer"
+                            loading="lazy"
+                            decoding="async"
                           />
                         </td>
                         
@@ -1544,6 +1635,33 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                   </tbody>
                 </table>
               </div>
+
+              {/* Pagination controls for Catalog */}
+              {totalCatalogPages > 1 && (
+                <div className="flex items-center justify-between px-6 py-4 bg-[#101010] border-t border-gray-900 text-xs">
+                  <span className="text-gray-400">
+                    Página <strong className="text-white">{catalogPage}</strong> de <strong className="text-white">{totalCatalogPages}</strong> ({filteredCatalogMovies.length} títulos)
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCatalogPage((prev) => Math.max(1, prev - 1))}
+                      disabled={catalogPage === 1}
+                      className="px-3 py-1.5 rounded-lg bg-black border border-gray-800 text-gray-300 hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-all cursor-pointer font-bold"
+                    >
+                      Anterior
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCatalogPage((prev) => Math.min(totalCatalogPages, prev + 1))}
+                      disabled={catalogPage === totalCatalogPages}
+                      className="px-3 py-1.5 rounded-lg bg-black border border-gray-800 text-gray-300 hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-all cursor-pointer font-bold"
+                    >
+                      Próxima
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1676,7 +1794,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-900/40">
-                        {filteredUsers.map((u: any) => (
+                        {paginatedUsers.map((u: any) => (
                           <tr key={u.id} className="hover:bg-gray-900/10 transition-colors">
                             <td className="py-3 px-4 font-bold text-gray-100">{u.name}</td>
                             <td className="py-3 px-4 text-gray-400 font-mono">{u.email}</td>
@@ -1729,7 +1847,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
 
                 {/* Mobile Cards View */}
                 <div className="grid grid-cols-1 gap-3 md:hidden">
-                  {filteredUsers.map((u: any) => (
+                  {paginatedUsers.map((u: any) => (
                     <div 
                       key={u.id}
                       className="bg-[#0c0c0c] border border-gray-900 p-4 rounded-2xl shadow-lg space-y-3"
@@ -1778,6 +1896,33 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                     </div>
                   ))}
                 </div>
+
+                {/* Pagination controls for Users */}
+                {totalUsersPages > 1 && (
+                  <div className="flex items-center justify-between px-6 py-4 bg-[#0c0c0c] border border-gray-900 rounded-2xl text-xs">
+                    <span className="text-gray-400">
+                      Página <strong className="text-white">{usersPage}</strong> de <strong className="text-white">{totalUsersPages}</strong> ({filteredUsers.length} usuários)
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setUsersPage((prev) => Math.max(1, prev - 1))}
+                        disabled={usersPage === 1}
+                        className="px-3 py-1.5 rounded-lg bg-black border border-gray-800 text-gray-300 hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-all cursor-pointer font-bold"
+                      >
+                        Anterior
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setUsersPage((prev) => Math.min(totalUsersPages, prev + 1))}
+                        disabled={usersPage === totalUsersPages}
+                        className="px-3 py-1.5 rounded-lg bg-black border border-gray-800 text-gray-300 hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-all cursor-pointer font-bold"
+                      >
+                        Próxima
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2433,106 +2578,288 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
 
         {/* VIEW 4: SETTINGS SUB-TAB */}
         {activeSubTab === "settings" && (
-          <div className="max-w-xl mx-auto bg-[#0c0c0c] border border-gray-900 p-6 rounded-3xl shadow-xl">
-            <h3 className="text-lg font-bold text-gray-200 mb-2 flex items-center gap-2">
-              <Settings className="w-5 h-5 text-brand-primary" />
-              <span>Configurações PipocaMax</span>
-            </h3>
-            <p className="text-xs text-gray-400 mb-6 leading-relaxed font-sans">
-              Configure chaves de integração externas para turbinar seu catálogo de mídia.
-            </p>
-
-            <div className="space-y-5 font-sans">
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
-                    TMDB API Key (v3)
-                  </label>
-                  <a 
-                    href="https://www.themoviedb.org/settings/api" 
-                    target="_blank" 
-                    rel="noreferrer"
-                    className="text-[11px] text-emerald-400 hover:underline font-medium"
-                  >
-                    Obter Chave Grátis no TMDB →
-                  </a>
+          <div className="max-w-4xl mx-auto space-y-8">
+            {/* CARD 1: SYSTEM MAINTENANCE MODE SETTINGS */}
+            <div className="bg-[#0c0c0c] border border-gray-900 p-6 md:p-8 rounded-3xl shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 border-b border-gray-900 pb-5">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-200 flex items-center gap-2">
+                    <Wrench className="w-5 h-5 text-amber-500" />
+                    <span>Modo de Manutenção do Sistema</span>
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-1 font-sans">
+                    Gerencie a acessibilidade do site para visitantes em tempo real. Administradores continuam com acesso irrestrito.
+                  </p>
                 </div>
 
-                <div className="relative">
-                  <input
-                    type={showApiKey ? "text" : "password"}
-                    placeholder="Cole sua chave da API do TMDB aqui..."
-                    value={tmdbApiKey}
-                    onChange={(e) => setTmdbApiKey(e.target.value)}
-                    className="w-full bg-black border border-gray-800 focus:border-emerald-500 focus:outline-none text-white text-sm py-2.5 pl-4 pr-10 rounded-xl transition-all font-mono"
-                  />
+                <div className="flex items-center gap-3">
+                  <span className={`px-3 py-1.5 rounded-full text-xs font-extrabold uppercase tracking-wider border flex items-center gap-1.5 ${
+                    maintEnabled
+                      ? "bg-amber-500/15 border-amber-500/40 text-amber-400"
+                      : "bg-emerald-500/15 border-emerald-500/40 text-emerald-400"
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${maintEnabled ? "bg-amber-400 animate-ping" : "bg-emerald-400"}`} />
+                    {maintEnabled ? "EM MANUTENÇÃO (ATIVO)" : "SISTEMA OPERANTE"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-6 font-sans">
+                {/* Master Toggle Switch */}
+                <div className="flex items-center justify-between p-4 rounded-2xl bg-[#141414] border border-gray-800">
+                  <div className="space-y-0.5">
+                    <span className="text-sm font-bold text-white block">
+                      Ativar Tela de Manutenção no Site
+                    </span>
+                    <span className="text-xs text-gray-400 block">
+                      Quando ativado, visitantes e usuários comuns verão a tela de manutenção.
+                    </span>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setShowApiKey(!showApiKey)}
-                    className="absolute right-3 top-3 text-gray-500 hover:text-gray-300 cursor-pointer"
-                    title={showApiKey ? "Ocultar chave" : "Mostrar chave"}
+                    onClick={() => setMaintEnabled(!maintEnabled)}
+                    className={`relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      maintEnabled ? "bg-amber-500" : "bg-gray-800"
+                    }`}
                   >
-                    {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    <span
+                      className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                        maintEnabled ? "translate-x-6" : "translate-x-0"
+                      }`}
+                    />
                   </button>
                 </div>
 
-                <p className="text-[10px] text-gray-500 mt-1.5 leading-normal">
-                  Esta chave é utilizada para buscar e importar títulos, pôsteres, sinopses, trailers e elencos em lote. Ao salvar abaixo, a chave ficará gravada no seu banco de dados e no navegador.
-                </p>
-              </div>
+                {/* Customization Fields */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                      Título do Aviso
+                    </label>
+                    <input
+                      type="text"
+                      value={maintTitle}
+                      onChange={(e) => setMaintTitle(e.target.value)}
+                      placeholder="Ex: Estamos em Manutenção Programada ⚙️"
+                      className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-4 rounded-xl transition-all"
+                    />
+                  </div>
 
-              {/* Status Indicator */}
-              <div className="flex items-center gap-2 py-1 text-xs">
-                <span className="text-gray-400">Status atual da Chave:</span>
-                {tmdbApiKey ? (
-                  <span className="text-emerald-400 font-semibold flex items-center gap-1">
-                    <Check className="w-3.5 h-3.5" />
-                    Configurada
-                  </span>
-                ) : (
-                  <span className="text-amber-500 font-semibold flex items-center gap-1">
-                    <X className="w-3.5 h-3.5" />
-                    Não configurada
-                  </span>
-                )}
-              </div>
-
-              {/* Error and Success feedback */}
-              {settingsFeedback.error && (
-                <div className="p-3 bg-red-950/20 border border-red-900/30 text-red-400 text-xs rounded-xl flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4" />
-                  <span>{settingsFeedback.error}</span>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                      Previsão de Retorno
+                    </label>
+                    <input
+                      type="text"
+                      value={maintReturn}
+                      onChange={(e) => setMaintReturn(e.target.value)}
+                      placeholder="Ex: Em breve (Algumas horas)"
+                      className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-4 rounded-xl transition-all"
+                    />
+                  </div>
                 </div>
-              )}
 
-              {settingsFeedback.success && (
-                <div className="p-3 bg-[#00d573]/10 border border-[#00d573]/20 text-[#00d573] text-xs rounded-xl flex items-center gap-2">
-                  <Check className="w-4 h-4" />
-                  <span>{settingsFeedback.success}</span>
+                <div className="space-y-1.5">
+                  <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                    Mensagem Descritiva para os Usuários
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={maintMessage}
+                    onChange={(e) => setMaintMessage(e.target.value)}
+                    placeholder="Descreva o motivo da manutenção e agradeça a compreensão..."
+                    className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-4 rounded-xl transition-all resize-none"
+                  />
                 </div>
-              )}
 
-              <button
-                type="button"
-                onClick={handleSaveSettingsToDb}
-                disabled={savingSettings}
-                className="w-full bg-brand-primary hover:bg-brand-secondary disabled:bg-gray-800 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-red-600/10 hover:scale-101 mt-2"
-              >
-                {savingSettings ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Salvando no Banco...</span>
-                  </>
-                ) : (
-                  <>
-                    <Database className="w-4 h-4" />
-                    <span>Salvar no Banco de Dados</span>
-                  </>
+                {/* Feedback Alerts */}
+                {maintFeedback.error && (
+                  <div className="p-3 bg-red-950/20 border border-red-900/30 text-red-400 text-xs rounded-xl flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>{maintFeedback.error}</span>
+                  </div>
                 )}
-              </button>
+
+                {maintFeedback.success && (
+                  <div className="p-3 bg-[#00d573]/10 border border-[#00d573]/20 text-[#00d573] text-xs rounded-xl flex items-center gap-2">
+                    <Check className="w-4 h-4 shrink-0" />
+                    <span>{maintFeedback.success}</span>
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveMaintenanceToDb}
+                    disabled={maintSaving}
+                    className="w-full sm:flex-1 bg-amber-600 hover:bg-amber-500 disabled:bg-gray-800 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-amber-600/20"
+                  >
+                    {maintSaving ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Salvando no Servidor...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Database className="w-4 h-4" />
+                        <span>Salvar Configuração de Manutenção</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setMaintPreviewOpen(true)}
+                    className="w-full sm:w-auto bg-[#1a1a1a] hover:bg-[#252525] border border-gray-800 text-gray-200 hover:text-white font-bold py-3 px-5 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Eye className="w-4 h-4 text-amber-400" />
+                    <span>Pré-visualizar Tela de Manutenção</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* CARD 2: TMDB API KEY SETTINGS */}
+            <div className="bg-[#0c0c0c] border border-gray-900 p-6 md:p-8 rounded-3xl shadow-xl">
+              <h3 className="text-lg font-bold text-gray-200 mb-2 flex items-center gap-2">
+                <Settings className="w-5 h-5 text-brand-primary" />
+                <span>Integração TMDB API Key (v3)</span>
+              </h3>
+              <p className="text-xs text-gray-400 mb-6 leading-relaxed font-sans">
+                Configure sua chave externa para importação automática em lote de títulos, pôsteres e trailers.
+              </p>
+
+              <div className="space-y-5 font-sans">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                      Chave da API TMDB
+                    </label>
+                    <a 
+                      href="https://www.themoviedb.org/settings/api" 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="text-[11px] text-emerald-400 hover:underline font-medium"
+                    >
+                      Obter Chave Grátis no TMDB →
+                    </a>
+                  </div>
+
+                  <div className="relative">
+                    <input
+                      type={showApiKey ? "text" : "password"}
+                      placeholder="Cole sua chave da API do TMDB aqui..."
+                      value={tmdbApiKey}
+                      onChange={(e) => setTmdbApiKey(e.target.value)}
+                      className="w-full bg-black border border-gray-800 focus:border-emerald-500 focus:outline-none text-white text-sm py-2.5 pl-4 pr-10 rounded-xl transition-all font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      className="absolute right-3 top-3 text-gray-500 hover:text-gray-300 cursor-pointer"
+                      title={showApiKey ? "Ocultar chave" : "Mostrar chave"}
+                    >
+                      {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Status Indicator */}
+                <div className="flex items-center gap-2 py-1 text-xs">
+                  <span className="text-gray-400">Status da Chave TMDB:</span>
+                  {tmdbApiKey ? (
+                    <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                      <Check className="w-3.5 h-3.5" />
+                      Configurada & Ativa
+                    </span>
+                  ) : (
+                    <span className="text-amber-500 font-semibold flex items-center gap-1">
+                      <X className="w-3.5 h-3.5" />
+                      Não configurada
+                    </span>
+                  )}
+                </div>
+
+                {/* Error and Success feedback */}
+                {settingsFeedback.error && (
+                  <div className="p-3 bg-red-950/20 border border-red-900/30 text-red-400 text-xs rounded-xl flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>{settingsFeedback.error}</span>
+                  </div>
+                )}
+
+                {settingsFeedback.success && (
+                  <div className="p-3 bg-[#00d573]/10 border border-[#00d573]/20 text-[#00d573] text-xs rounded-xl flex items-center gap-2">
+                    <Check className="w-4 h-4" />
+                    <span>{settingsFeedback.success}</span>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleSaveSettingsToDb}
+                  disabled={savingSettings}
+                  className="w-full bg-brand-primary hover:bg-brand-secondary disabled:bg-gray-800 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-red-600/10 hover:scale-101 mt-2"
+                >
+                  {savingSettings ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Salvando Chave...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Database className="w-4 h-4" />
+                      <span>Salvar Chave TMDB no Banco</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         )}
+
+        {/* MAINTENANCE SCREEN PREVIEW MODAL */}
+        <AnimatePresence>
+          {maintPreviewOpen && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[10000] bg-black flex flex-col"
+            >
+              {/* Preview Banner */}
+              <div className="bg-amber-600/90 text-white px-6 py-3 flex items-center justify-between text-xs font-bold border-b border-amber-500 shadow-md">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 text-white" />
+                  <span>MOTO DE PRÉ-VISUALIZAÇÃO DA TELA DE MANUTENÇÃO (É COMO OS VISITANTES VERÃO SE ATIVADO)</span>
+                </div>
+                <button
+                  onClick={() => setMaintPreviewOpen(false)}
+                  className="bg-black/40 hover:bg-black/60 text-white px-3 py-1.5 rounded-lg border border-white/20 transition-all cursor-pointer font-extrabold"
+                >
+                  ✕ Fechar Pré-visualização
+                </button>
+              </div>
+
+              {/* Render actual maintenance screen */}
+              <div className="flex-1 overflow-auto">
+                <MaintenanceScreen
+                  title={maintTitle}
+                  message={maintMessage}
+                  estimatedReturn={maintReturn}
+                  onAdminLogin={() => {
+                    showToast("No modo real, este botão permite login para administradores.", "info");
+                    setMaintPreviewOpen(false);
+                  }}
+                  onRefreshStatus={() => {
+                    showToast("Simulação de verificação de status no modo de pré-visualização.", "info");
+                  }}
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
       </div>
 
@@ -3215,6 +3542,8 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                                   alt={item.title} 
                                   className="w-16 h-24 object-cover rounded-xl bg-gray-950 shrink-0 shadow-md"
                                   referrerPolicy="no-referrer"
+                                  loading="lazy"
+                                  decoding="async"
                                 />
 
                                 {/* Info */}

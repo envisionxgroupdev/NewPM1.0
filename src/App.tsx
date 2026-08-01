@@ -19,13 +19,15 @@ import {
   clearContinueWatching,
   CONTINUE_WATCHING_EVENT,
 } from "./utils/continueWatching";
-import { Film, Bookmark, Zap, AlertCircle, Tv, Flame, Star, Clapperboard, Heart, ArrowRight, Bug } from "lucide-react";
+import { Film, Bookmark, Zap, AlertCircle, Tv, Flame, Star, Clapperboard, Heart, ArrowRight, Bug, Wrench } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import MaintenanceScreen from "./components/MaintenanceScreen";
+import { sortMoviesByYearDesc } from "./utils/sortMovies";
 
 const ALL_GENRES = ["Tudo", "Ação", "Ficção Científica", "Aventura", "Animação", "Drama", "Família", "Suspense", "Policial"];
 
 export default function App() {
-  const [movies, setMovies] = useState<Movie[]>(MOVIES_DATA);
+  const [movies, setMovies] = useState<Movie[]>(() => sortMoviesByYearDesc(MOVIES_DATA));
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("home");
@@ -45,6 +47,57 @@ export default function App() {
     episode?: number;
     cinemaMode?: boolean;
   }>({});
+
+  const [maintenanceConfig, setMaintenanceConfig] = useState<{
+    enabled: boolean;
+    title: string;
+    message: string;
+    estimatedReturn: string;
+  }>({
+    enabled: false,
+    title: "Estamos em Manutenção Programada ⚙️",
+    message: "Estamos realizando atualizações em nossos servidores para melhorar a velocidade e a estabilidade. Voltaremos em breve!",
+    estimatedReturn: "Em breve (Algumas horas)"
+  });
+
+  useEffect(() => {
+    const fetchMaintenance = async () => {
+      try {
+        const res = await fetch("/api/settings/maintenance");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.maintenance) {
+            const nextEnabled = Boolean(data.maintenance.enabled);
+            const nextTitle = data.maintenance.title || "Estamos em Manutenção Programada ⚙️";
+            const nextMessage = data.maintenance.message || "Estamos realizando atualizações em nossos servidores para melhorar a velocidade e a estabilidade. Voltaremos em breve!";
+            const nextReturn = data.maintenance.estimatedReturn || "Em breve (Algumas horas)";
+            
+            setMaintenanceConfig((prev) => {
+              if (
+                prev.enabled === nextEnabled &&
+                prev.title === nextTitle &&
+                prev.message === nextMessage &&
+                prev.estimatedReturn === nextReturn
+              ) {
+                return prev;
+              }
+              return {
+                enabled: nextEnabled,
+                title: nextTitle,
+                message: nextMessage,
+                estimatedReturn: nextReturn,
+              };
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Erro ao buscar status de manutenção:", err);
+      }
+    };
+    fetchMaintenance();
+    const interval = setInterval(fetchMaintenance, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Sync Continue Watching items from localStorage
   const refreshContinueWatching = () => {
@@ -106,7 +159,7 @@ export default function App() {
   useUserSync({
     currentUser,
     setCurrentUser,
-    intervalMs: 5000, // Sincroniza a cada 5 segundos
+    intervalMs: 30000, // Sincroniza a cada 30 segundos sem causar re-renders
     onRoleChanged: (newRole, oldRole) => {
       console.log(`[App] Permissão do usuário alterada de "${oldRole}" para "${newRole}"`);
       // Se o usuário perder o acesso admin enquanto navega no painel de administração, redireciona para o início
@@ -163,7 +216,7 @@ export default function App() {
       if (response.ok) {
         const data = await response.json();
         if (data && data.movies && Array.isArray(data.movies)) {
-          setMovies(data.movies);
+          setMovies(sortMoviesByYearDesc(data.movies));
         }
       }
     } catch (err) {
@@ -231,62 +284,70 @@ export default function App() {
   const isNetflixHomeView = activeTab === "home" && selectedGenre === "Tudo" && !searchQuery;
 
   const favoriteMoviesList = useMemo(() => {
-    return movies.filter((m) => favorites.includes(m.id));
+    return sortMoviesByYearDesc(movies.filter((m) => favorites.includes(m.id)));
   }, [movies, favorites]);
 
   const trendingMoviesList = useMemo(() => {
-    return movies.filter((m) => m.featured === true);
+    return sortMoviesByYearDesc(movies.filter((m) => m.featured === true));
   }, [movies]);
 
   const filmesList = useMemo(() => {
-    return movies.filter((m) => m.type === "filme");
+    return sortMoviesByYearDesc(movies.filter((m) => m.type === "filme"));
   }, [movies]);
 
   const seriesList = useMemo(() => {
-    return movies.filter((m) => m.type === "serie");
+    return sortMoviesByYearDesc(movies.filter((m) => m.type === "serie"));
   }, [movies]);
 
   const animesList = useMemo(() => {
-    return movies.filter((m) => m.type === "anime");
+    return sortMoviesByYearDesc(movies.filter((m) => m.type === "anime"));
   }, [movies]);
 
   const topRatedList = useMemo(() => {
-    return [...movies].filter((m) => m.rating >= 8.0).sort((a, b) => b.rating - a.rating);
+    return [...movies].filter((m) => m.rating >= 8.0).sort((a, b) => {
+      const yrA = Number(a.year || 0);
+      const yrB = Number(b.year || 0);
+      if (yrB !== yrA) return yrB - yrA;
+      return b.rating - a.rating;
+    });
   }, [movies]);
 
   // Filter movies
-  const filteredMovies = movies.filter((movie) => {
-    // 1. Filter by active tab (Category)
-    if (activeTab === "favorites") {
-      if (!favorites.includes(movie.id)) return false;
-    } else if (activeTab === "filmes") {
-      if (movie.type !== "filme") return false;
-    } else if (activeTab === "series") {
-      if (movie.type !== "serie") return false;
-    } else if (activeTab === "animes") {
-      if (movie.type !== "anime") return false;
-    }
-
-    // 2. Filter by genre pill (only if not searching)
-    if (selectedGenre !== "Tudo" && !searchQuery) {
-      if (!movie.genres.includes(selectedGenre)) {
-        return false;
+  const filteredMovies = useMemo(() => {
+    const list = movies.filter((movie) => {
+      // 1. Filter by active tab (Category)
+      if (activeTab === "favorites") {
+        if (!favorites.includes(movie.id)) return false;
+      } else if (activeTab === "filmes") {
+        if (movie.type !== "filme") return false;
+      } else if (activeTab === "series") {
+        if (movie.type !== "serie") return false;
+      } else if (activeTab === "animes") {
+        if (movie.type !== "anime") return false;
       }
-    }
 
-    // 3. Filter by search text query
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      const matchTitle = movie.title.toLowerCase().includes(q);
-      const matchOriginal = movie.originalTitle?.toLowerCase().includes(q);
-      const matchDirector = movie.director.toLowerCase().includes(q);
-      const matchGenre = movie.genres.some((g) => g.toLowerCase().includes(q));
-      const matchCast = movie.cast.some((c) => c.toLowerCase().includes(q));
-      return matchTitle || matchOriginal || matchDirector || matchGenre || matchCast;
-    }
+      // 2. Filter by genre pill (only if not searching)
+      if (selectedGenre !== "Tudo" && !searchQuery) {
+        if (!movie.genres.includes(selectedGenre)) {
+          return false;
+        }
+      }
 
-    return true;
-  });
+      // 3. Filter by search text query
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        const matchTitle = movie.title.toLowerCase().includes(q);
+        const matchOriginal = movie.originalTitle?.toLowerCase().includes(q);
+        const matchDirector = movie.director.toLowerCase().includes(q);
+        const matchGenre = movie.genres.some((g) => g.toLowerCase().includes(q));
+        const matchCast = movie.cast.some((c) => c.toLowerCase().includes(q));
+        return matchTitle || matchOriginal || matchDirector || matchGenre || matchCast;
+      }
+
+      return true;
+    });
+    return sortMoviesByYearDesc(list);
+  }, [movies, activeTab, favorites, selectedGenre, searchQuery]);
 
   // Get count label helper
   const getCountLabel = () => {
@@ -300,8 +361,47 @@ export default function App() {
     return `${count} ${count === 1 ? "título" : "títulos"}`;
   };
 
+  // If System Maintenance is active AND current user is not an administrator, show MaintenanceScreen
+  if (maintenanceConfig.enabled && currentUser?.role !== "admin") {
+    return (
+      <>
+        <MaintenanceScreen
+          title={maintenanceConfig.title}
+          message={maintenanceConfig.message}
+          estimatedReturn={maintenanceConfig.estimatedReturn}
+          onAdminLogin={() => setIsAuthModalOpen(true)}
+        />
+        <AnimatePresence>
+          {isAuthModalOpen && (
+            <AuthModal
+              isOpen={isAuthModalOpen}
+              onClose={() => setIsAuthModalOpen(false)}
+              onAuthSuccess={handleAuthSuccess}
+            />
+          )}
+        </AnimatePresence>
+      </>
+    );
+  }
+
   return (
     <div className="flex flex-col min-h-screen bg-black text-gray-200" id="pipocamax-app-root">
+      {/* Admin warning banner when maintenance is enabled */}
+      {maintenanceConfig.enabled && currentUser?.role === "admin" && (
+        <div className="bg-amber-500 text-black px-4 py-2 flex items-center justify-between text-xs font-extrabold shadow-md z-50">
+          <div className="flex items-center gap-2">
+            <Wrench className="w-4 h-4 text-black animate-spin-slow" />
+            <span>MODO DE MANUTENÇÃO ESTÁ ATIVADO PARA O PÚBLICO! Apenas Administradores têm acesso ao site no momento.</span>
+          </div>
+          <button
+            onClick={() => setActiveTab("admin")}
+            className="bg-black text-amber-400 hover:bg-gray-900 px-3 py-1 rounded-lg transition-all text-[11px] font-black cursor-pointer"
+          >
+            Gerenciar em Configurações →
+          </button>
+        </div>
+      )}
+
       {/* Navigation Header */}
       <Header
         searchQuery={searchQuery}

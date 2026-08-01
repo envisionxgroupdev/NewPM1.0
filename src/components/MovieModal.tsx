@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Movie, Review } from "../types";
 import { X, Play, Bookmark, BookmarkCheck, Star, Send, Trash2, ChevronLeft, ChevronRight, Clock, Calendar, User, ArrowLeft, Film, Flag, Maximize2, Minimize2, Tv } from "lucide-react";
 import { saveContinueWatching, getContinueWatchingList } from "../utils/continueWatching";
+import LazyImage from "./LazyImage";
 
 // Helper to get beautiful, themed Netflix-style episode metadata based on genre and index
 const getEpisodeDetails = (type: "serie" | "anime" | "filme", genres: string[], season: number, epNum: number) => {
@@ -446,11 +447,14 @@ export default function MovieModal({
                 <div className="relative z-20 p-4 sm:p-8 md:p-10 w-full flex flex-col md:flex-row gap-4 sm:gap-6 md:gap-10 items-start md:items-end">
                   {/* Left-side Widescreen Poster */}
                   <div className="hidden sm:block w-32 md:w-44 aspect-[2/3] rounded-xl overflow-hidden shadow-2xl border border-gray-800/80 shrink-0 transform hover:scale-[1.02] transition-transform duration-300">
-                    <img
+                    <LazyImage
                       src={movie.posterUrl}
                       alt={movie.title}
+                      containerClassName="w-full h-full"
                       className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
+                      loading="lazy"
+                      decoding="async"
+                      fetchPriority="auto"
                     />
                   </div>
 
@@ -771,11 +775,15 @@ export default function MovieModal({
                         >
                           {/* Thumbnail Frame */}
                           <div className="relative w-full sm:w-36 aspect-video bg-[#0f0f0f] rounded-xl overflow-hidden shrink-0 border border-gray-900 shadow-md">
-                            <img
+                            <LazyImage
                               src={movie.backdropUrl}
                               alt={details.title}
+                              containerClassName="w-full h-full"
                               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 filter brightness-90 group-hover:brightness-100"
-                              referrerPolicy="no-referrer"
+                              loading="lazy"
+                              decoding="async"
+                              fetchPriority="low"
+                              rootMargin="200px"
                             />
                             {/* Play overlay hover indicator */}
                             <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
@@ -1007,11 +1015,16 @@ export default function MovieModal({
                         id={`similar-movie-${similar.id}`}
                       >
                         <div className="w-10 h-14 bg-gray-950 rounded-lg overflow-hidden shrink-0 shadow border border-gray-900">
-                          <img
+                          <LazyImage
                             src={similar.posterUrl}
                             alt={similar.title}
+                            containerClassName="w-full h-full"
                             className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300"
-                            referrerPolicy="no-referrer"
+                            loading="lazy"
+                            decoding="async"
+                            fetchPriority="low"
+                            rootMargin="200px"
+                            fallbackIconSize="sm"
                           />
                         </div>
                         <div className="min-w-0">

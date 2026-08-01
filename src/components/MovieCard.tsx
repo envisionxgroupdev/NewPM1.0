@@ -2,6 +2,7 @@ import React from "react";
 import { Movie } from "../types";
 import { Play, Star, Bookmark, BookmarkCheck } from "lucide-react";
 import { motion } from "motion/react";
+import LazyImage from "./LazyImage";
 
 interface MovieCardProps {
   movie: Movie;
@@ -20,21 +21,23 @@ export default function MovieCard({
 }: MovieCardProps) {
   return (
     <motion.div
-      layout
       whileHover={{ y: -6, scale: 1.02 }}
-      transition={{ duration: 0.25 }}
+      transition={{ duration: 0.2 }}
       className="group relative flex flex-col bg-dark-card rounded-xl overflow-hidden border border-gray-800/60 hover:border-brand-primary/40 shadow-lg cursor-pointer h-full"
       onClick={() => onMovieClick(movie)}
       id={`movie-card-${movie.id}`}
     >
-      {/* Poster Image Cover */}
+      {/* Poster Image Cover with Lazy Loading & Shimmer */}
       <div className="relative aspect-[2/3] overflow-hidden bg-gray-900">
-        <img
+        <LazyImage
           src={movie.posterUrl}
           alt={movie.title}
+          containerClassName="w-full h-full"
           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-          referrerPolicy="no-referrer"
           loading="lazy"
+          decoding="async"
+          fetchPriority="low"
+          rootMargin="300px"
         />
 
         {/* Recent / New arrival badge overlay */}

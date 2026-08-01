@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useCallback } from "react";
 
 export interface User {
   id: string;
@@ -12,25 +12,24 @@ export interface User {
 export interface UseUserSyncOptions {
   currentUser: User | null;
   setCurrentUser: (user: User | null | ((prev: User | null) => User | null)) => void;
-  intervalMs?: number; // Frequência de sincronização (padrão: 5000ms = 5 segundos)
+  intervalMs?: number; // Frequência de sincronização (padrão: 30000ms = 30 segundos)
   onRoleChanged?: (newRole: string, oldRole: string) => void;
   onUserLoggedOut?: () => void;
 }
 
 /**
  * Hook customizado para sincronizar o perfil do usuário logado periodicamente com o servidor/banco de dados.
- * Garante que alterações em tempo real (como mudanças de permissão admin/user ou atualizações de perfil)
- * reflitam instantaneamente na interface sem necessidade de recarregar a página.
+ * Garante que alterações em tempo real reflitam sem causar re-renderizações desnecessárias.
  */
 export function useUserSync({
   currentUser,
   setCurrentUser,
-  intervalMs = 5000,
+  intervalMs = 30000,
   onRoleChanged,
   onUserLoggedOut,
 }: UseUserSyncOptions) {
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const isSyncingRef = useRef(false);
+  const lastSyncedAtRef = useRef<Date | null>(null);
 
   // Utilizar ref para manter o usuário atualizado sem causar loops em useCallback
   const currentUserRef = useRef(currentUser);
@@ -41,10 +40,10 @@ export function useUserSync({
 
   const syncProfile = useCallback(async () => {
     const user = currentUserRef.current;
-    if (!user || !user.email) return;
+    if (!user || !user.email || isSyncingRef.current) return;
 
     try {
-      setIsSyncing(true);
+      isSyncingRef.current = true;
       const response = await fetch(`/api/auth/me?email=${encodeURIComponent(user.email.trim())}`);
 
       // Caso o usuário tenha sido removido do servidor / banco de dados
@@ -85,8 +84,8 @@ export function useUserSync({
     } catch (err) {
       console.warn("[useUserSync] Erro de rede ao sincronizar perfil do usuário:", err);
     } finally {
-      setIsSyncing(false);
-      setLastSyncedAt(new Date());
+      isSyncingRef.current = false;
+      lastSyncedAtRef.current = new Date();
     }
   }, [setCurrentUser, onRoleChanged, onUserLoggedOut]);
 
@@ -97,12 +96,12 @@ export function useUserSync({
     // Executa a primeira sincronização imediatamente ao montar ou logar
     syncProfile();
 
-    // Sincronização periódica em segundo plano (padrão: 5s)
+    // Sincronização periódica em segundo plano
     const intervalId = setInterval(() => {
       syncProfile();
     }, intervalMs);
 
-    // Re-sincroniza imediatamente quando o usuário volta para a aba da aplicação ou foca a janela
+    // Re-sincroniza imediatamente quando o usuário volta para a aba da aplicação
     const handleFocusOrVisibility = () => {
       if (document.visibilityState === "visible") {
         syncProfile();
@@ -121,7 +120,7 @@ export function useUserSync({
 
   return {
     syncProfile,
-    isSyncing,
-    lastSyncedAt,
+    isSyncing: isSyncingRef.current,
+    lastSyncedAt: lastSyncedAtRef.current,
   };
 }

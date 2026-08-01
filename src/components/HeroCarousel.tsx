@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Movie } from "../types";
 import { Play, Info, Bookmark, BookmarkCheck, ChevronLeft, ChevronRight } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import LazyImage from "./LazyImage";
 
 interface HeroCarouselProps {
   movies: Movie[];
@@ -53,11 +54,14 @@ export default function HeroCarousel({
         >
           <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/30 z-10" />
           <div className="absolute inset-0 bg-gradient-to-r from-black via-black/30 to-transparent z-10" />
-          <img
+          <LazyImage
             src={currentMovie.backdropUrl}
             alt={currentMovie.title}
+            containerClassName="w-full h-full"
             className="w-full h-full object-cover object-center scale-102 filter brightness-85"
-            referrerPolicy="no-referrer"
+            loading="eager"
+            decoding="async"
+            fetchPriority="high"
           />
         </motion.div>
       </AnimatePresence>
