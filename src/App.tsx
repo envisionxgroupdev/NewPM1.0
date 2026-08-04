@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Movie, ContinueWatchingItem } from "./types";
-import { MOVIES_DATA } from "./moviesData";
 import Header from "./components/Header";
 import HeroCarousel from "./components/HeroCarousel";
 import MovieCard from "./components/MovieCard";
@@ -20,15 +19,16 @@ import {
   clearContinueWatching,
   CONTINUE_WATCHING_EVENT,
 } from "./utils/continueWatching";
-import { Film, Bookmark, Zap, AlertCircle, Tv, Flame, Star, Clapperboard, Heart, ArrowRight, Bug, Wrench, ShieldAlert } from "lucide-react";
+import { Film, Bookmark, Zap, AlertCircle, Tv, Flame, Star, Clapperboard, Heart, ArrowRight, Bug, Wrench, ShieldAlert, Calendar } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import MaintenanceScreen from "./components/MaintenanceScreen";
 import { sortMoviesByYearDesc } from "./utils/sortMovies";
+import { subscribeToMovies } from "./lib/firebase";
 
 const ALL_GENRES = ["Tudo", "Ação", "Ficção Científica", "Aventura", "Animação", "Drama", "Família", "Suspense", "Policial"];
 
 export default function App() {
-  const [movies, setMovies] = useState<Movie[]>(() => sortMoviesByYearDesc(MOVIES_DATA));
+  const [movies, setMovies] = useState<Movie[]>([]);
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("home");
@@ -134,6 +134,9 @@ export default function App() {
     } else if (activeTab === "anime" || activeTab === "animes") {
       title = "Animes Online Legendados e Dublados em HD - PipocaMax";
       metaDesc = "Assista a animes online grátis em HD. Episódios atualizados de animes populares, lançamentos da temporada no PipocaMax.";
+    } else if (activeTab === "embreve" || activeTab === "em-breve") {
+      title = "Em Breve - Próximos Lançamentos de Cinema e Streaming - PipocaMax";
+      metaDesc = "Confira a lista de filmes, séries e animes em breve (ano > 2026). Fique por dentro de todas as novidades que estreiam nos próximos anos no PipocaMax.";
     } else if (activeTab === "favorites") {
       title = "Meus Favoritos - PipocaMax";
     } else if (selectedGenre && selectedGenre !== "Tudo") {
@@ -250,7 +253,7 @@ export default function App() {
     return null;
   };
 
-  // Fetch movies from server/DB
+  // Fetch movies from server/DB and subscribe to real-time Firestore updates
   const fetchMovies = async () => {
     try {
       const response = await fetch("/api/movies");
@@ -266,7 +269,20 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Fetch initial state from server
     fetchMovies();
+
+    // Subscribe to real-time Firestore updates for live catalog synchronization
+    const unsubscribe = subscribeToMovies(
+      (updatedMovies) => {
+        setMovies(updatedMovies);
+      },
+      (err) => {
+        console.warn("[App] Erro na inscrição Firestore em tempo real:", err);
+      }
+    );
+
+    return () => unsubscribe();
   }, []);
 
   const handleAuthSuccess = (user: any) => {
@@ -348,6 +364,10 @@ export default function App() {
     return sortMoviesByYearDesc(movies.filter((m) => m.type === "anime"));
   }, [movies]);
 
+  const comingSoonList = useMemo(() => {
+    return sortMoviesByYearDesc(movies.filter((m) => Number(m.year) > 2026));
+  }, [movies]);
+
   const topRatedList = useMemo(() => {
     return [...movies].filter((m) => m.rating >= 8.0).sort((a, b) => {
       const yrA = Number(a.year || 0);
@@ -369,6 +389,8 @@ export default function App() {
         if (movie.type !== "serie") return false;
       } else if (activeTab === "animes" || activeTab === "anime") {
         if (movie.type !== "anime") return false;
+      } else if (activeTab === "embreve" || activeTab === "em-breve") {
+        if (Number(movie.year) <= 2026) return false;
       }
 
       // 2. Filter by genre pill (only if not searching)
@@ -402,6 +424,9 @@ export default function App() {
     }
     if (activeTab === "animes" || activeTab === "anime") {
       return `${count} ${count === 1 ? "anime" : "animes"}`;
+    }
+    if (activeTab === "embreve" || activeTab === "em-breve") {
+      return `${count} ${count === 1 ? "lançamento futuro" : "lançamentos futuros"}`;
     }
     return `${count} ${count === 1 ? "título" : "títulos"}`;
   };
@@ -623,7 +648,25 @@ export default function App() {
                 currentUser={currentUser}
               />
 
-              {/* Row 5: Top Rated */}
+              {/* Row 5: Em Breve (Lançamentos futuros ano > 2026) */}
+              {comingSoonList.length > 0 && (
+                <NetflixRow
+                  title="Em Breve"
+                  icon={<Calendar className="w-5 h-5 text-amber-400" />}
+                  movies={comingSoonList}
+                  onMovieClick={handleMovieClick}
+                  favorites={favorites}
+                  onToggleFavorite={handleToggleFavorite}
+                  recentMovieIds={recentMovieIds}
+                  onSeeAll={() => setActiveTab("embreve")}
+                  seeAllLabel="Ver lançamentos futuros"
+                  badge="Em Breve"
+                  maxItems={20}
+                  currentUser={currentUser}
+                />
+              )}
+
+              {/* Row 6: Top Rated */}
               <NetflixRow
                 title="Mais Bem Avaliados"
                 icon={<Star className="w-5 h-5 text-amber-400 fill-amber-400" />}
@@ -664,6 +707,11 @@ export default function App() {
                     <>
                       <Zap className="w-5.5 h-5.5 text-brand-primary" />
                       <span>{selectedGenre === "Tudo" ? "Catálogo de Animes" : `Animes de ${selectedGenre}`}</span>
+                    </>
+                  ) : activeTab === "embreve" || activeTab === "em-breve" ? (
+                    <>
+                      <Calendar className="w-5.5 h-5.5 text-amber-400" />
+                      <span>{selectedGenre === "Tudo" ? "Em Breve (Lançamentos Futuros)" : `Em Breve de ${selectedGenre}`}</span>
                     </>
                   ) : (
                     <>
@@ -848,6 +896,20 @@ export default function App() {
                     className="w-full text-left py-1.5 px-2 rounded-lg hover:bg-gray-900/80 hover:text-red-400 transition-all cursor-pointer block font-medium"
                   >
                     Animes Legendados e Dublados
+                  </button>
+                </li>
+                <li>
+                  <button
+                    onClick={() => {
+                      setSelectedMovie(null);
+                      setSearchQuery("");
+                      setActiveTab("embreve");
+                      setSelectedGenre("Tudo");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="w-full text-left py-1.5 px-2 rounded-lg hover:bg-gray-900/80 hover:text-amber-400 transition-all cursor-pointer block font-medium"
+                  >
+                    Em Breve (Lançamentos Futuros)
                   </button>
                 </li>
               </ul>

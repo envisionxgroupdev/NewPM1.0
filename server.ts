@@ -175,7 +175,7 @@ function getFirestoreDb() {
 }
 
 // Local storage for in-memory fallback
-let localMoviesList: any[] = [...MOVIES_DATA];
+let localMoviesList: any[] = [];
 let localUsersList: any[] = [
   {
     id: "admin-default",
@@ -306,10 +306,17 @@ function safeIsoDate(val: any): string | null {
   return null;
 }
 
+// Helper for bounded execution of database calls
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallbackValue: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallbackValue), timeoutMs))
+  ]);
+}
+
 // Sync and fetch users from Firestore
 async function fetchUsersFromDb() {
   const db = getFirestoreDb();
-  let mapped: any[] = [];
 
   const rootAdmin = {
     id: "admin-default",
@@ -322,35 +329,39 @@ async function fetchUsersFromDb() {
 
   if (db) {
     try {
-      const usersSnapshot = await db.collection("users").get();
-      if (!usersSnapshot.empty) {
-        usersSnapshot.forEach((docSnap: any) => {
-          const u = docSnap.data();
-          mapped.push({
-            id: docSnap.id,
-            name: u.name || "",
-            email: u.email || "",
-            password: u.password || "",
-            role: u.role || "user",
-            status: u.status || "active",
-            createdAt: safeIsoDate(u.createdAt) || new Date().toISOString()
+      const fetchPromise = (async () => {
+        const usersSnapshot = await db.collection("users").get();
+        if (!usersSnapshot.empty) {
+          const mapped: any[] = [];
+          usersSnapshot.forEach((docSnap: any) => {
+            const u = docSnap.data();
+            mapped.push({
+              id: docSnap.id,
+              name: u.name || "",
+              email: u.email || "",
+              password: u.password || "",
+              role: u.role || "user",
+              status: u.status || "active",
+              createdAt: safeIsoDate(u.createdAt) || new Date().toISOString()
+            });
           });
-        });
 
-        // Ensure root fallback admin exists in mapped if missing from Firestore collection
-        if (!mapped.some(u => u.email && u.email.toLowerCase().trim() === rootAdmin.email)) {
-          mapped.push(rootAdmin);
+          if (!mapped.some(u => u.email && u.email.toLowerCase().trim() === rootAdmin.email)) {
+            mapped.push(rootAdmin);
+          }
+
+          localUsersList = mapped;
+          return mapped;
         }
+        return localUsersList;
+      })();
 
-        localUsersList = mapped;
-        return mapped;
-      }
+      return await withTimeout(fetchPromise, 3500, localUsersList);
     } catch (e) {
       console.warn("Erro ao buscar usuários do Firestore:", e);
     }
   }
 
-  // Ensure localUsersList has root fallback admin if list is empty or missing
   if (!localUsersList.some(u => u.email && u.email.toLowerCase().trim() === rootAdmin.email)) {
     localUsersList.push(rootAdmin);
   }
@@ -430,45 +441,47 @@ async function fetchTitlesFromDb() {
   const db = getFirestoreDb();
   if (db) {
     try {
-      console.log("Tentando carregar títulos do Firestore...");
-      const moviesSnapshot = await db.collection("movies").get();
-      if (!moviesSnapshot.empty) {
-        const mapped: any[] = [];
-        moviesSnapshot.forEach((docSnap: any) => {
-          const row = docSnap.data();
-          mapped.push({
-            id: docSnap.id,
-            title: row.title || "",
-            originalTitle: row.originalTitle || row.title || "",
-            year: Number(row.year || 2026),
-            duration: row.duration || "120 min",
-            rating: Number(row.rating || 8.0),
-            genres: Array.isArray(row.genres) ? row.genres : [],
-            synopsis: row.synopsis || "",
-            backdropUrl: row.backdropUrl || "",
-            posterUrl: row.posterUrl || "",
-            trailerVideoId: row.trailerVideoId || "dQw4w9WgXcQ",
-            cast: Array.isArray(row.cast) ? row.cast : [],
-            director: row.director || "",
-            featured: Boolean(row.featured),
-            type: row.type || "filme",
-            imdbId: row.imdbId || "",
-            createdAt: safeIsoDate(row.createdAt),
+      const fetchPromise = (async () => {
+        console.log("Tentando carregar títulos do Firestore...");
+        const moviesSnapshot = await db.collection("movies").get();
+        if (!moviesSnapshot.empty) {
+          const mapped: any[] = [];
+          moviesSnapshot.forEach((docSnap: any) => {
+            if (docSnap.id === "catalog" || docSnap.id === "sitemap" || docSnap.id === "config") return;
+            const row = docSnap.data();
+            if (!row || !row.title || typeof row.title !== "string" || !row.title.trim()) return;
+
+            mapped.push({
+              id: docSnap.id,
+              title: row.title || "",
+              originalTitle: row.originalTitle || row.title || "",
+              year: Number(row.year || 2026),
+              duration: row.duration || "120 min",
+              rating: Number(row.rating || 8.0),
+              genres: Array.isArray(row.genres) ? row.genres : [],
+              synopsis: row.synopsis || "",
+              backdropUrl: row.backdropUrl || "",
+              posterUrl: row.posterUrl || "",
+              trailerVideoId: row.trailerVideoId || "dQw4w9WgXcQ",
+              cast: Array.isArray(row.cast) ? row.cast : [],
+              director: row.director || "",
+              featured: Boolean(row.featured),
+              type: row.type || "filme",
+              imdbId: row.imdbId || "",
+              createdAt: safeIsoDate(row.createdAt),
+            });
           });
-        });
-        localMoviesList = mapped;
-        return mapped;
-      } else {
-        console.log("Coleção de filmes vazia no Firestore. Semeando catálogo inicial automaticamente...");
-        try {
-          await seedDatabase();
-          return localMoviesList;
-        } catch (seedErr) {
-          console.error("Falha ao auto-semear no boot:", seedErr);
-          localMoviesList = [...MOVIES_DATA];
-          return localMoviesList;
+
+          if (mapped.length > 0) {
+            localMoviesList = mapped;
+            return mapped;
+          }
         }
-      }
+        
+        return localMoviesList;
+      })();
+
+      return await withTimeout(fetchPromise, 4000, localMoviesList);
     } catch (e) {
       console.warn("Erro ao buscar filmes do Firestore:", e);
     }
@@ -515,11 +528,13 @@ async function seedDatabase() {
 }
 
 async function startServer() {
-  // Initialize user tables if database is available
+  // Initialize user tables and pre-fetch data from Firestore on boot
   try {
-    await initializeUsersTable();
+    initializeUsersTable().catch(e => console.warn("Erro ao inicializar tabela de usuários:", e));
+    fetchTitlesFromDb().catch(e => console.warn("Erro no pré-carregamento de títulos:", e));
+    fetchUsersFromDb().catch(e => console.warn("Erro no pré-carregamento de usuários:", e));
   } catch (err) {
-    console.warn("Falha ao inicializar tabela de usuários:", err);
+    console.warn("Falha ao inicializar banco de dados no boot:", err);
   }
 
   const app = express();
@@ -2338,12 +2353,9 @@ async function startServer() {
 
       let catalogMovies = localMoviesList || MOVIES_DATA;
       try {
-        const db = getFirestoreDb();
-        if (db) {
-          const docSnap = await db.collection("movies").doc("catalog").get();
-          if (docSnap.exists() && Array.isArray(docSnap.data()?.movies) && docSnap.data().movies.length > 0) {
-            catalogMovies = docSnap.data().movies;
-          }
+        const fetched = await fetchTitlesFromDb();
+        if (Array.isArray(fetched) && fetched.length > 0) {
+          catalogMovies = fetched;
         }
       } catch (e) {
         // Fallback to localMoviesList / MOVIES_DATA

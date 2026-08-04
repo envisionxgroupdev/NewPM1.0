@@ -19,10 +19,12 @@ export default function HeroCarousel({
   onToggleFavorite,
   currentUser,
 }: HeroCarouselProps) {
-  const featuredMovies = movies.filter((m) => m.featured) || movies;
+  const featured = (movies || []).filter((m) => m && m.featured);
+  const featuredMovies = featured.length > 0 ? featured : (movies || []).slice(0, 5);
   const [currentIndex, setCurrentIndex] = useState(0);
 
   useEffect(() => {
+    if (featuredMovies.length === 0) return;
     const timer = setInterval(() => {
       setCurrentIndex((prev) => (prev + 1) % featuredMovies.length);
     }, 7000);
@@ -30,16 +32,19 @@ export default function HeroCarousel({
   }, [featuredMovies.length]);
 
   const handlePrev = () => {
+    if (featuredMovies.length === 0) return;
     setCurrentIndex((prev) => (prev - 1 + featuredMovies.length) % featuredMovies.length);
   };
 
   const handleNext = () => {
+    if (featuredMovies.length === 0) return;
     setCurrentIndex((prev) => (prev + 1) % featuredMovies.length);
   };
 
   if (featuredMovies.length === 0) return null;
 
-  const currentMovie = featuredMovies[currentIndex];
+  const currentMovie = featuredMovies[currentIndex] || featuredMovies[0];
+  if (!currentMovie || !currentMovie.id) return null;
   const isFavorite = favorites.includes(currentMovie.id);
 
   return (
