@@ -12,6 +12,7 @@ import ReportModal from "./components/ReportModal";
 import ReportWebsiteBugModal from "./components/ReportWebsiteBugModal";
 import ProfileModal from "./components/ProfileModal";
 import AdminPanel from "./components/AdminPanel";
+import ReleaseCalendar from "./components/ReleaseCalendar";
 import { useUserSync } from "./hooks/useUserSync";
 import {
   getContinueWatchingList,
@@ -19,7 +20,7 @@ import {
   clearContinueWatching,
   CONTINUE_WATCHING_EVENT,
 } from "./utils/continueWatching";
-import { Film, Bookmark, Zap, AlertCircle, Tv, Flame, Star, Clapperboard, Heart, ArrowRight, Bug, Wrench } from "lucide-react";
+import { Film, Bookmark, Zap, AlertCircle, Tv, Flame, Star, Clapperboard, Heart, ArrowRight, Bug, Wrench, ShieldAlert } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import MaintenanceScreen from "./components/MaintenanceScreen";
 import { sortMoviesByYearDesc } from "./utils/sortMovies";
@@ -34,6 +35,7 @@ export default function App() {
   const [selectedGenre, setSelectedGenre] = useState("Tudo");
   const [favorites, setFavorites] = useState<string[]>([]);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [bannedAlertOpen, setBannedAlertOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [isWebsiteBugModalOpen, setIsWebsiteBugModalOpen] = useState(false);
@@ -111,6 +113,42 @@ export default function App() {
     setContinueWatchingItems(updatedList);
   };
 
+  // Dynamic SEO Document Title & Meta Tags Management
+  useEffect(() => {
+    let title = "PipocaMax - Filmes, Séries e Animes Online em HD";
+    let metaDesc = "Assista a Filmes, Séries e Animes online grátis em HD no PipocaMax. Confira os últimos lançamentos, sinopses detalhadas, trailers e buscas instantâneas.";
+
+    if (selectedMovie) {
+      const typeLabel = selectedMovie.type === "serie" ? "Série" : selectedMovie.type === "anime" ? "Anime" : "Filme";
+      title = `Assistir ${selectedMovie.title} (${selectedMovie.year || "Online"}) - ${typeLabel} em HD - PipocaMax`;
+      metaDesc = `Assistir ${selectedMovie.title} online em HD. ${selectedMovie.synopsis ? selectedMovie.synopsis.slice(0, 140) + "..." : "Veja o trailer, sinopse, elenco e reprodução no PipocaMax."}`;
+    } else if (searchQuery.trim()) {
+      title = `Buscar "${searchQuery}" - Filmes e Séries no PipocaMax`;
+      metaDesc = `Resultados da busca por ${searchQuery} em filmes, séries e animes no PipocaMax.`;
+    } else if (activeTab === "filme" || activeTab === "filmes") {
+      title = "Filmes Online em HD - Lançamentos e Sucessos de Cinema - PipocaMax";
+      metaDesc = "Catálogo completo de filmes online grátis em HD. Assista a lançamentos de ação, comédia, terror, drama e animação no PipocaMax.";
+    } else if (activeTab === "serie" || activeTab === "series") {
+      title = "Séries Online em HD - Assistir Temporadas Completas - PipocaMax";
+      metaDesc = "Assista às melhores séries online em HD. Todas as temporadas, episódios atualizados, dublados e legendados no PipocaMax.";
+    } else if (activeTab === "anime" || activeTab === "animes") {
+      title = "Animes Online Legendados e Dublados em HD - PipocaMax";
+      metaDesc = "Assista a animes online grátis em HD. Episódios atualizados de animes populares, lançamentos da temporada no PipocaMax.";
+    } else if (activeTab === "favorites") {
+      title = "Meus Favoritos - PipocaMax";
+    } else if (selectedGenre && selectedGenre !== "Tudo") {
+      title = `${selectedGenre} - Filmes, Séries e Animes - PipocaMax`;
+      metaDesc = `Explore os melhores títulos do gênero ${selectedGenre} no PipocaMax.`;
+    }
+
+    document.title = title;
+
+    const metaDescEl = document.querySelector('meta[name="description"]');
+    if (metaDescEl) {
+      metaDescEl.setAttribute("content", metaDesc);
+    }
+  }, [selectedMovie, activeTab, searchQuery, selectedGenre]);
+
   useEffect(() => {
     refreshContinueWatching();
     const handleUpdate = () => refreshContinueWatching();
@@ -167,9 +205,12 @@ export default function App() {
         setActiveTab("home");
       }
     },
-    onUserLoggedOut: () => {
+    onUserLoggedOut: (reason) => {
       if (activeTab === "admin") {
         setActiveTab("home");
+      }
+      if (reason === "banned") {
+        setBannedAlertOpen(true);
       }
     }
   });
@@ -245,6 +286,10 @@ export default function App() {
     if (e) {
       e.stopPropagation(); // Avoid triggering card click
     }
+    if (!currentUser) {
+      setIsAuthModalOpen(true);
+      return;
+    }
     let updated;
     if (favorites.includes(movie.id)) {
       updated = favorites.filter((id) => id !== movie.id);
@@ -318,11 +363,11 @@ export default function App() {
       // 1. Filter by active tab (Category)
       if (activeTab === "favorites") {
         if (!favorites.includes(movie.id)) return false;
-      } else if (activeTab === "filmes") {
+      } else if (activeTab === "filmes" || activeTab === "filme") {
         if (movie.type !== "filme") return false;
-      } else if (activeTab === "series") {
+      } else if (activeTab === "series" || activeTab === "serie") {
         if (movie.type !== "serie") return false;
-      } else if (activeTab === "animes") {
+      } else if (activeTab === "animes" || activeTab === "anime") {
         if (movie.type !== "anime") return false;
       }
 
@@ -352,10 +397,10 @@ export default function App() {
   // Get count label helper
   const getCountLabel = () => {
     const count = filteredMovies.length;
-    if (activeTab === "series") {
+    if (activeTab === "series" || activeTab === "serie") {
       return `${count} ${count === 1 ? "série" : "séries"}`;
     }
-    if (activeTab === "animes") {
+    if (activeTab === "animes" || activeTab === "anime") {
       return `${count} ${count === 1 ? "anime" : "animes"}`;
     }
     return `${count} ${count === 1 ? "título" : "títulos"}`;
@@ -434,6 +479,13 @@ export default function App() {
             onMoviesUpdated={fetchMovies} 
             currentUser={currentUser}
           />
+        ) : activeTab === "calendar" ? (
+          <ReleaseCalendar
+            onSelectMovie={(m) => handleMovieClick(m as Movie)}
+            movies={movies}
+            currentUser={currentUser}
+            onMoviesUpdated={fetchMovies}
+          />
         ) : (
           <>
             {/* Banner Carousel: Only display on Home tab when there is no current search query */}
@@ -443,6 +495,7 @@ export default function App() {
                 onMovieClick={handleMovieClick}
                 favorites={favorites}
                 onToggleFavorite={(m) => handleToggleFavorite(m)}
+                currentUser={currentUser}
               />
             )}
 
@@ -518,6 +571,7 @@ export default function App() {
                   onToggleFavorite={handleToggleFavorite}
                   recentMovieIds={recentMovieIds}
                   badge="Destaques"
+                  currentUser={currentUser}
                 />
               )}
 
@@ -534,6 +588,7 @@ export default function App() {
                 seeAllLabel="Ver todos os filmes"
                 badge="Filmes"
                 maxItems={20}
+                currentUser={currentUser}
               />
 
               {/* Row 3: Séries */}
@@ -549,6 +604,7 @@ export default function App() {
                 seeAllLabel="Ver todas as séries"
                 badge="Séries"
                 maxItems={20}
+                currentUser={currentUser}
               />
 
               {/* Row 4: Animes */}
@@ -564,6 +620,7 @@ export default function App() {
                 seeAllLabel="Ver todos os animes"
                 badge="Animes"
                 maxItems={20}
+                currentUser={currentUser}
               />
 
               {/* Row 5: Top Rated */}
@@ -577,6 +634,7 @@ export default function App() {
                 recentMovieIds={recentMovieIds}
                 badge="Top 10"
                 maxItems={20}
+                currentUser={currentUser}
               />
             </div>
           ) : (
@@ -592,17 +650,17 @@ export default function App() {
                       <Bookmark className="w-5.5 h-5.5 text-brand-primary fill-brand-primary" />
                       <span>Minha Lista de Favoritos</span>
                     </>
-                  ) : activeTab === "filmes" ? (
+                  ) : activeTab === "filmes" || activeTab === "filme" ? (
                     <>
                       <Film className="w-5.5 h-5.5 text-brand-primary" />
                       <span>{selectedGenre === "Tudo" ? "Catálogo de Filmes" : `Filmes de ${selectedGenre}`}</span>
                     </>
-                  ) : activeTab === "series" ? (
+                  ) : activeTab === "series" || activeTab === "serie" ? (
                     <>
                       <Tv className="w-5.5 h-5.5 text-brand-primary" />
                       <span>{selectedGenre === "Tudo" ? "Catálogo de Séries" : `Séries de ${selectedGenre}`}</span>
                     </>
-                  ) : activeTab === "animes" ? (
+                  ) : activeTab === "animes" || activeTab === "anime" ? (
                     <>
                       <Zap className="w-5.5 h-5.5 text-brand-primary" />
                       <span>{selectedGenre === "Tudo" ? "Catálogo de Animes" : `Animes de ${selectedGenre}`}</span>
@@ -642,6 +700,7 @@ export default function App() {
                             isFavorite={favorites.includes(movie.id)}
                             onToggleFavorite={handleToggleFavorite}
                             isRecent={recentMovieIds.has(movie.id)}
+                            currentUser={currentUser}
                           />
                         </motion.div>
                       ))}
@@ -713,35 +772,149 @@ export default function App() {
         )}
       </main>
 
-      {/* Footer block */}
-      <footer className="border-t border-gray-900 bg-black py-8 text-center text-xs text-gray-500">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-1.5">
-            <Clapperboard className="w-4.5 h-4.5 text-brand-primary" />
-            <span className="font-display font-bold text-white text-sm tracking-wider">
-              Pipoca<span className="text-brand-primary">Max</span>
-            </span>
+      {/* SEO-optimized Footer */}
+      <footer className="border-t border-gray-900 bg-[#08080a] pt-10 pb-8 text-xs text-gray-400">
+        <div className="max-w-7xl mx-auto px-4 space-y-8">
+          {/* Top Brand & Category Navigation */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 pb-6 border-b border-gray-900">
+            {/* Brand Intro */}
+            <div className="space-y-3 md:col-span-1">
+              <div className="flex items-center gap-2">
+                <Clapperboard className="w-5 h-5 text-brand-primary" />
+                <span className="font-display font-black text-white text-lg tracking-wider">
+                  Pipoca<span className="text-brand-primary">Max</span>
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                A sua plataforma definitiva para assistir a filmes, séries e animes online em alta definição. O melhor do cinema e streaming ao seu alcance.
+              </p>
+            </div>
+
+            {/* Nav Column 1: Categorias Populares */}
+            <div className="space-y-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-white">Navegação Rápida</h3>
+              <ul className="space-y-1 text-xs text-gray-400">
+                <li>
+                  <button
+                    onClick={() => {
+                      setSelectedMovie(null);
+                      setSearchQuery("");
+                      setActiveTab("home");
+                      setSelectedGenre("Tudo");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="w-full text-left py-1.5 px-2 rounded-lg hover:bg-gray-900/80 hover:text-red-400 transition-all cursor-pointer block font-medium"
+                  >
+                    Início / Populares
+                  </button>
+                </li>
+                <li>
+                  <button
+                    onClick={() => {
+                      setSelectedMovie(null);
+                      setSearchQuery("");
+                      setActiveTab("filmes");
+                      setSelectedGenre("Tudo");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="w-full text-left py-1.5 px-2 rounded-lg hover:bg-gray-900/80 hover:text-red-400 transition-all cursor-pointer block font-medium"
+                  >
+                    Filmes Online em HD
+                  </button>
+                </li>
+                <li>
+                  <button
+                    onClick={() => {
+                      setSelectedMovie(null);
+                      setSearchQuery("");
+                      setActiveTab("series");
+                      setSelectedGenre("Tudo");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="w-full text-left py-1.5 px-2 rounded-lg hover:bg-gray-900/80 hover:text-red-400 transition-all cursor-pointer block font-medium"
+                  >
+                    Séries e Temporadas
+                  </button>
+                </li>
+                <li>
+                  <button
+                    onClick={() => {
+                      setSelectedMovie(null);
+                      setSearchQuery("");
+                      setActiveTab("animes");
+                      setSelectedGenre("Tudo");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="w-full text-left py-1.5 px-2 rounded-lg hover:bg-gray-900/80 hover:text-red-400 transition-all cursor-pointer block font-medium"
+                  >
+                    Animes Legendados e Dublados
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            {/* Nav Column 2: Gêneros em Destaque */}
+            <div className="space-y-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-white">Gêneros Populares</h3>
+              <ul className="space-y-1 text-xs text-gray-400">
+                {["Ação", "Comédia", "Terror", "Animação", "Aventura"].map((g) => (
+                  <li key={g}>
+                    <button
+                      onClick={() => {
+                        setSelectedMovie(null);
+                        setSearchQuery("");
+                        setSelectedGenre(g);
+                        setActiveTab("home");
+                        window.scrollTo({ top: 0, behavior: "smooth" });
+                      }}
+                      className="w-full text-left py-1.5 px-2 rounded-lg hover:bg-gray-900/80 hover:text-amber-400 transition-all cursor-pointer block font-medium"
+                    >
+                      Filmes e Séries de {g}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Nav Column 3: Suporte & SEO Tech Links */}
+            <div className="space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-white">Suporte & Ferramentas</h3>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    if (!currentUser) {
+                      setIsAuthModalOpen(true);
+                    } else {
+                      setIsWebsiteBugModalOpen(true);
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:text-amber-300 font-extrabold px-3.5 py-2 rounded-xl transition-all cursor-pointer shadow-lg shadow-amber-500/10 text-xs w-fit"
+                  id="footer-report-bug-btn"
+                  title="Relatar um bug no site ou no filtro"
+                >
+                  <Bug className="w-4 h-4 text-amber-400" />
+                  <span>Reportar Bug no Site</span>
+                </button>
+
+                <div className="flex items-center gap-3 pt-1 text-[11px] text-gray-500">
+                  <a href="/sitemap.xml" target="_blank" rel="noopener noreferrer" className="hover:text-gray-300 transition-colors underline">
+                    Sitemap.xml
+                  </a>
+                  <span>•</span>
+                  <a href="/robots.txt" target="_blank" rel="noopener noreferrer" className="hover:text-gray-300 transition-colors underline">
+                    Robots.txt
+                  </a>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <p className="font-sans text-gray-500">
-            PipocaMax &copy; 2026. Todos os direitos reservados. Assista aos melhores filmes, séries e animes online em alta definição.
-          </p>
-
-          <button
-            onClick={() => {
-              if (!currentUser) {
-                setIsAuthModalOpen(true);
-              } else {
-                setIsWebsiteBugModalOpen(true);
-              }
-            }}
-            className="flex items-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:text-amber-300 font-extrabold px-4 py-2 rounded-full transition-all cursor-pointer shadow-lg shadow-amber-500/10 text-xs shrink-0 hover:scale-[1.03] active:scale-[0.97]"
-            id="footer-report-bug-btn"
-            title="Relatar um bug no site ou no filtro"
-          >
-            <Bug className="w-4 h-4 text-amber-400" />
-            <span>Reportar Bug</span>
-          </button>
+          {/* Bottom Copyright Statement */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left text-gray-500 text-[11px]">
+            <p>
+              PipocaMax &copy; 2026. Todos os direitos reservados. Assista aos melhores filmes, séries e animes online em alta definição HD.
+            </p>
+          </div>
         </div>
       </footer>
 
@@ -762,6 +935,8 @@ export default function App() {
             initialSeason={modalResumeParams.season}
             initialEpisode={modalResumeParams.episode}
             initialCinemaMode={modalResumeParams.cinemaMode}
+            currentUser={currentUser}
+            onOpenAuth={() => setIsAuthModalOpen(true)}
             onOpenReport={(m) => {
               if (!currentUser) {
                 setIsAuthModalOpen(true);
@@ -840,6 +1015,47 @@ export default function App() {
               setIsWebsiteBugModalOpen(true);
             }}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Account Banned / Blocked Modal */}
+      <AnimatePresence>
+        {bannedAlertOpen && (
+          <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-[#0f0f0f] border border-red-900/50 rounded-3xl p-7 max-w-md w-full shadow-2xl text-center space-y-5"
+            >
+              <div className="w-16 h-16 rounded-2xl bg-red-950/60 border border-red-800 flex items-center justify-center text-red-500 mx-auto shadow-lg shadow-red-900/20">
+                <ShieldAlert className="w-8 h-8" />
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-extrabold text-white text-lg tracking-tight">
+                  Acesso Bloqueado
+                </h3>
+                <p className="text-xs text-gray-400 leading-relaxed max-w-sm mx-auto">
+                  Sua conta foi suspensa ou bloqueada por um administrador do PipocaMax. Seu acesso ao sistema e reprodução de conteúdos foram desativados.
+                </p>
+              </div>
+
+              <div className="bg-red-950/30 border border-red-900/40 rounded-2xl p-3.5 text-left flex items-start gap-3">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-red-300 leading-normal">
+                  Se você acredita que isso foi um engano, entre em contato com o suporte ou equipe de administração do PipocaMax.
+                </p>
+              </div>
+
+              <button
+                onClick={() => setBannedAlertOpen(false)}
+                className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs tracking-wide uppercase transition-all shadow-lg shadow-red-600/30 cursor-pointer"
+              >
+                Entendido
+              </button>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>

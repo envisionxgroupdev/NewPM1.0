@@ -14,7 +14,7 @@ export interface UseUserSyncOptions {
   setCurrentUser: (user: User | null | ((prev: User | null) => User | null)) => void;
   intervalMs?: number; // Frequência de sincronização (padrão: 30000ms = 30 segundos)
   onRoleChanged?: (newRole: string, oldRole: string) => void;
-  onUserLoggedOut?: () => void;
+  onUserLoggedOut?: (reason?: "banned" | "not_found") => void;
 }
 
 /**
@@ -46,12 +46,12 @@ export function useUserSync({
       isSyncingRef.current = true;
       const response = await fetch(`/api/auth/me?email=${encodeURIComponent(user.email.trim())}`);
 
-      // Caso o usuário tenha sido removido do servidor / banco de dados
-      if (response.status === 404) {
-        console.warn("Usuário não foi encontrado no servidor. Encerrando sessão...");
+      // Caso o usuário tenha sido removido ou bloqueado/banido no servidor
+      if (response.status === 404 || response.status === 403) {
+        console.warn("Usuário não foi encontrado ou encontra-se bloqueado no servidor. Encerrando sessão...");
         setCurrentUser(null);
         localStorage.removeItem("pipocamax_user");
-        if (onUserLoggedOut) onUserLoggedOut();
+        if (onUserLoggedOut) onUserLoggedOut(response.status === 403 ? "banned" : "not_found");
         return;
       }
 
@@ -59,6 +59,13 @@ export function useUserSync({
         const data = await response.json();
         if (data.success && data.user) {
           const updatedUser: User = data.user;
+          if (updatedUser.status === "banned") {
+            console.warn("Usuário consta como bloqueado/banido. Encerrando sessão...");
+            setCurrentUser(null);
+            localStorage.removeItem("pipocamax_user");
+            if (onUserLoggedOut) onUserLoggedOut("banned");
+            return;
+          }
           const oldRole = user.role || "user";
           const newRole = updatedUser.role || "user";
 

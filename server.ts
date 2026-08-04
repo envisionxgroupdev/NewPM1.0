@@ -95,6 +95,7 @@ class FirestoreWrapper {
           });
           return {
             empty: snap.empty,
+            docs: docs,
             forEach: (callback: (d: any) => void) => docs.forEach(callback),
             size: snap.size
           };
@@ -102,6 +103,7 @@ class FirestoreWrapper {
           console.warn(`Firestore getDocs error (${collectionName}):`, err);
           return {
             empty: true,
+            docs: [],
             forEach: () => {},
             size: 0
           };
@@ -121,12 +123,13 @@ class FirestoreWrapper {
               });
               return {
                 empty: docs.length === 0,
+                docs: docs,
                 forEach: (callback: (d: any) => void) => docs.forEach(callback),
                 size: docs.length
               };
             } catch (err) {
               console.warn(`Firestore query error (${collectionName}):`, err);
-              return { empty: true, forEach: () => {}, size: 0 };
+              return { empty: true, docs: [], forEach: () => {}, size: 0 };
             }
           }
         };
@@ -180,6 +183,7 @@ let localUsersList: any[] = [
     email: "admin@pipocamax.com",
     password: "admin",
     role: "admin",
+    status: "active",
     createdAt: new Date().toISOString()
   },
   {
@@ -188,6 +192,7 @@ let localUsersList: any[] = [
     email: "hylander@hylander.com",
     password: "admin",
     role: "admin",
+    status: "active",
     createdAt: new Date().toISOString()
   },
   {
@@ -196,6 +201,7 @@ let localUsersList: any[] = [
     email: "higorjuliatti159@gmail.com",
     password: "admin",
     role: "admin",
+    status: "active",
     createdAt: new Date().toISOString()
   }
 ];
@@ -222,7 +228,18 @@ async function fetchNotificationsFromDb() {
           if (idx === -1) {
             localNotificationsList.push(notif);
           } else {
-            localNotificationsList[idx] = notif;
+            const existing = localNotificationsList[idx];
+            const mergedReadBy = Array.from(new Set([
+              ...(Array.isArray(existing.readBy) ? existing.readBy : []),
+              ...(Array.isArray(notif.readBy) ? notif.readBy : [])
+            ]));
+            const mergedRead = Boolean(existing.read) || Boolean(notif.read);
+            localNotificationsList[idx] = {
+              ...notif,
+              ...existing,
+              read: mergedRead,
+              readBy: mergedReadBy
+            };
           }
         }
       }
@@ -315,6 +332,7 @@ async function fetchUsersFromDb() {
             email: u.email || "",
             password: u.password || "",
             role: u.role || "user",
+            status: u.status || "active",
             createdAt: safeIsoDate(u.createdAt) || new Date().toISOString()
           });
         });
@@ -806,10 +824,10 @@ async function startServer() {
     }
   });
 
-  // API route to direct import a TMDB title with 1-click
+  // API route to direct import a TMDB title with 1-click (with title search fallback and manual fallback)
   app.post("/api/tmdb/import-direct", requireAdmin, async (req, res) => {
     try {
-      const { tmdbId, type } = req.body;
+      let { tmdbId, type, title, poster, backdrop, air_date, episode } = req.body;
       const clientApiKey = req.headers["x-tmdb-api-key"] as string;
       
       let apiKey = clientApiKey || process.env.TMDB_API_KEY;
@@ -817,132 +835,211 @@ async function startServer() {
         apiKey = await getTmdbApiKeyFromDb();
       }
 
-      if (!apiKey) {
-        return res.status(400).json({ error: "Chave de API do TMDB não configurada." });
-      }
-
-      if (!tmdbId) {
-        return res.status(400).json({ error: "ID TMDB é obrigatório." });
+      // If tmdbId is missing but title is provided, try searching TMDB for tmdbId
+      if (!tmdbId && title && apiKey) {
+        try {
+          const searchType = type === "serie" || type === "tv" || type === "anime" ? "tv" : "movie";
+          const searchUrl = `https://api.themoviedb.org/3/search/${searchType}?api_key=${apiKey}&query=${encodeURIComponent(title)}&language=pt-BR&include_adult=false`;
+          const sRes = await fetch(searchUrl);
+          if (sRes.ok) {
+            const sData = await sRes.json();
+            if (sData.results && sData.results.length > 0) {
+              tmdbId = sData.results[0].id;
+            }
+          }
+        } catch (sErr) {
+          console.warn("Erro ao buscar tmdbId por título:", sErr);
+        }
       }
 
       const tmdbType = type === "serie" || type === "tv" || type === "anime" ? "tv" : "movie";
-      const appendParams = tmdbType === "tv" ? "credits,videos,external_ids" : "credits,videos";
-      const url = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}?api_key=${apiKey}&language=pt-BR&append_to_response=${appendParams}`;
-
-      const response = await fetch(url);
-      if (!response.ok) {
-        return res.status(response.status).json({ error: "Erro ao obter detalhes do TMDB no servidor." });
-      }
-
-      const data = await response.json();
-      const genres = (data.genres || []).map((g: any) => g.name);
-      if (genres.length === 0) genres.push("Outros");
-
-      let director = "Desconhecido";
-      let cast: string[] = [];
-      if (data.credits) {
-        if (data.credits.crew) {
-          const dirObj = data.credits.crew.find((member: any) => member.job === "Director");
-          if (dirObj) director = dirObj.name;
-        }
-        if (data.credits.cast) {
-          cast = data.credits.cast.slice(0, 5).map((c: any) => c.name);
-        }
-      }
-      if (cast.length === 0) cast = ["Desconhecido"];
-
-      let trailerVideoId = "dQw4w9WgXcQ";
-      if (data.videos && data.videos.results) {
-        const trailer = data.videos.results.find((v: any) => v.type === "Trailer" && v.site === "YouTube");
-        if (trailer) {
-          trailerVideoId = trailer.key;
-        } else if (data.videos.results.length > 0) {
-          const anyVid = data.videos.results.find((v: any) => v.site === "YouTube");
-          if (anyVid) trailerVideoId = anyVid.key;
-        }
-      }
-
-      let duration = "120 min";
-      if (tmdbType === "movie") {
-        duration = data.runtime ? `${data.runtime} min` : "120 min";
-      } else {
-        const seasons = data.number_of_seasons || 1;
-        duration = `${seasons} Temp${seasons > 1 ? "s" : ""}`;
-      }
-
-      let imdbId = "";
-      if (tmdbType === "movie") {
-        imdbId = data.imdb_id || "";
-      } else if (data.external_ids) {
-        imdbId = data.external_ids.imdb_id || "";
-      }
-
       const titleType: "filme" | "serie" | "anime" = type === "anime" ? "anime" : (tmdbType === "tv" ? "serie" : "filme");
-      const releaseYear = data.release_date 
-        ? new Date(data.release_date).getFullYear() 
-        : (data.first_air_date ? new Date(data.first_air_date).getFullYear() : 2026);
 
-      const titleName = data.title || data.name;
-      const normalizedTitle = titleName ? titleName.toLowerCase().replace(/[^a-z0-9]/g, "").trim() : "";
-
-      // Duplicate check: verify if title already exists by TMDB ID, IMDb ID, or normalized title + type
-      const existingMovie = localMoviesList.find(m => {
-        if (m.tmdbId && String(m.tmdbId) === String(data.id)) return true;
-        if (m.id === `tmdb-${data.id}`) return true;
-        if (imdbId && m.imdbId && m.imdbId === imdbId) return true;
-        if (normalizedTitle && m.title) {
-          const normExisting = m.title.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
-          if (normExisting === normalizedTitle && m.type === titleType) return true;
+      // Try fetching details from TMDB if tmdbId & apiKey exist
+      let data: any = null;
+      if (tmdbId && apiKey) {
+        try {
+          const appendParams = tmdbType === "tv" ? "credits,videos,external_ids" : "credits,videos";
+          const url = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}?api_key=${apiKey}&language=pt-BR&append_to_response=${appendParams}`;
+          const response = await fetch(url);
+          if (response.ok) {
+            data = await response.json();
+          }
+        } catch (fetchErr) {
+          console.warn("Aviso ao buscar detalhes TMDB:", fetchErr);
         }
+      }
+
+      // If TMDB data was retrieved
+      if (data) {
+        const genres = (data.genres || []).map((g: any) => g.name);
+        if (genres.length === 0) genres.push("Outros");
+
+        let director = "Desconhecido";
+        let cast: string[] = [];
+        if (data.credits) {
+          if (data.credits.crew) {
+            const dirObj = data.credits.crew.find((member: any) => member.job === "Director");
+            if (dirObj) director = dirObj.name;
+          }
+          if (data.credits.cast) {
+            cast = data.credits.cast.slice(0, 5).map((c: any) => c.name);
+          }
+        }
+        if (cast.length === 0) cast = ["Desconhecido"];
+
+        let trailerVideoId = "dQw4w9WgXcQ";
+        if (data.videos && data.videos.results) {
+          const trailer = data.videos.results.find((v: any) => v.type === "Trailer" && v.site === "YouTube");
+          if (trailer) {
+            trailerVideoId = trailer.key;
+          } else if (data.videos.results.length > 0) {
+            const anyVid = data.videos.results.find((v: any) => v.site === "YouTube");
+            if (anyVid) trailerVideoId = anyVid.key;
+          }
+        }
+
+        let duration = "120 min";
+        if (tmdbType === "movie") {
+          duration = data.runtime ? `${data.runtime} min` : "120 min";
+        } else {
+          const seasons = data.number_of_seasons || 1;
+          duration = `${seasons} Temp${seasons > 1 ? "s" : ""}`;
+        }
+
+        let imdbId = "";
+        if (tmdbType === "movie") {
+          imdbId = data.imdb_id || "";
+        } else if (data.external_ids) {
+          imdbId = data.external_ids.imdb_id || "";
+        }
+
+        const releaseYear = data.release_date 
+          ? new Date(data.release_date).getFullYear() 
+          : (data.first_air_date ? new Date(data.first_air_date).getFullYear() : 2026);
+
+        const titleName = data.title || data.name || title || "Sem título";
+        const normalizedTitle = titleName.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+
+        // Duplicate check
+        const existingMovie = localMoviesList.find(m => {
+          if (m.tmdbId && String(m.tmdbId) === String(data.id)) return true;
+          if (m.id === `tmdb-${data.id}`) return true;
+          if (imdbId && m.imdbId && m.imdbId === imdbId) return true;
+          if (normalizedTitle && m.title) {
+            const normExisting = m.title.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+            if (normExisting === normalizedTitle && m.type === titleType) return true;
+          }
+          return false;
+        });
+
+        if (existingMovie) {
+          return res.json({ 
+            success: true, 
+            movie: existingMovie, 
+            alreadyExisted: true, 
+            message: `O título "${existingMovie.title}" já está cadastrado no catálogo.` 
+          });
+        }
+
+        const newMovie: any = {
+          id: `tmdb-${data.id}`,
+          title: titleName,
+          originalTitle: data.original_title || data.original_name || titleName,
+          year: isNaN(releaseYear) ? 2026 : releaseYear,
+          duration,
+          rating: Number((data.vote_average || 0).toFixed(1)) || 8.5,
+          genres,
+          synopsis: data.overview || (episode ? `Lançamento: ${episode}` : "Sem sinopse disponível."),
+          backdropUrl: data.backdrop_path ? `https://image.tmdb.org/t/p/w1280${data.backdrop_path}` : (backdrop ? (backdrop.startsWith("http") ? backdrop : `https://image.tmdb.org/t/p/w1280${backdrop}`) : "https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1000"),
+          posterUrl: data.poster_path ? `https://image.tmdb.org/t/p/w500${data.poster_path}` : (poster ? (poster.startsWith("http") ? poster : `https://image.tmdb.org/t/p/w500${poster}`) : "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=500"),
+          trailerVideoId,
+          cast,
+          director,
+          featured: false,
+          type: titleType,
+          imdbId,
+          tmdbId: String(data.id),
+          createdAt: new Date().toISOString()
+        };
+
+        const db = getFirestoreDb();
+        if (db) {
+          await db.collection("movies").doc(newMovie.id).set(newMovie);
+        }
+
+        const existingIdx = localMoviesList.findIndex(m => m.id === newMovie.id || (m.tmdbId && m.tmdbId === newMovie.tmdbId));
+        if (existingIdx >= 0) {
+          localMoviesList[existingIdx] = newMovie;
+        } else {
+          localMoviesList.unshift(newMovie);
+        }
+
+        return res.json({ success: true, movie: newMovie, message: `"${newMovie.title}" adicionado ao catálogo com sucesso!` });
+      }
+
+      // Fallback if TMDB API is unavailable or title wasn't found on TMDB: create directly from provided metadata
+      if (!title) {
+        return res.status(400).json({ error: "Título é obrigatório para cadastrar no site." });
+      }
+
+      const cleanTitle = String(title).trim();
+      const normTitle = cleanTitle.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+
+      const existingFallback = localMoviesList.find(m => {
+        if (m.title && m.title.toLowerCase().replace(/[^a-z0-9]/g, "").trim() === normTitle && m.type === titleType) return true;
+        if (tmdbId && m.tmdbId && String(m.tmdbId) === String(tmdbId)) return true;
         return false;
       });
 
-      if (existingMovie) {
-        return res.json({ 
-          success: true, 
-          movie: existingMovie, 
-          alreadyExisted: true, 
-          message: `O título "${existingMovie.title}" já está cadastrado no catálogo.` 
+      if (existingFallback) {
+        return res.json({
+          success: true,
+          movie: existingFallback,
+          alreadyExisted: true,
+          message: `O título "${existingFallback.title}" já está cadastrado no catálogo.`
         });
       }
 
-      const newMovie: any = {
-        id: `tmdb-${data.id}`,
-        title: titleName,
-        originalTitle: data.original_title || data.original_name || data.title || data.name,
-        year: isNaN(releaseYear) ? 2026 : releaseYear,
-        duration,
-        rating: Number((data.vote_average || 0).toFixed(1)),
-        genres,
-        synopsis: data.overview || "Sem sinopse disponível.",
-        backdropUrl: data.backdrop_path ? `https://image.tmdb.org/t/p/w1280${data.backdrop_path}` : "https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1000",
-        posterUrl: data.poster_path ? `https://image.tmdb.org/t/p/w500${data.poster_path}` : "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=500",
-        trailerVideoId,
-        cast,
-        director,
+      const yearFromDate = air_date ? parseInt(String(air_date).split("-")[0], 10) : 2026;
+      const formattedPoster = poster ? (poster.startsWith("http") ? poster : `https://image.tmdb.org/t/p/w500${poster}`) : "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=500";
+      const formattedBackdrop = backdrop ? (backdrop.startsWith("http") ? backdrop : `https://image.tmdb.org/t/p/w1280${backdrop}`) : formattedPoster;
+
+      const manualMovie: any = {
+        id: tmdbId ? `tmdb-${tmdbId}` : `cal-${Date.now()}`,
+        title: cleanTitle,
+        originalTitle: cleanTitle,
+        year: isNaN(yearFromDate) ? 2026 : yearFromDate,
+        duration: titleType === "filme" ? "120 min" : "1 Temp",
+        rating: 8.5,
+        genres: [titleType === "anime" ? "Anime" : titleType === "serie" ? "Série" : "Filme", "Lançamento"],
+        synopsis: episode ? `Lançamento: ${episode}` : `Título adicionado pelo calendário em ${air_date || "2026"}.`,
+        backdropUrl: formattedBackdrop,
+        posterUrl: formattedPoster,
+        trailerVideoId: "dQw4w9WgXcQ",
+        cast: ["PipocaMax"],
+        director: "PipocaMax",
         featured: false,
         type: titleType,
-        imdbId,
-        tmdbId: String(data.id),
+        tmdbId: tmdbId ? String(tmdbId) : undefined,
         createdAt: new Date().toISOString()
       };
 
       const db = getFirestoreDb();
       if (db) {
-        await db.collection("movies").doc(newMovie.id).set(newMovie);
+        await db.collection("movies").doc(manualMovie.id).set(manualMovie);
       }
 
-      const existingIdx = localMoviesList.findIndex(m => m.id === newMovie.id || (m.tmdbId && m.tmdbId === newMovie.tmdbId));
-      if (existingIdx >= 0) {
-        localMoviesList[existingIdx] = newMovie;
-      } else {
-        localMoviesList.unshift(newMovie);
-      }
+      localMoviesList.unshift(manualMovie);
 
-      res.json({ success: true, movie: newMovie });
+      res.json({
+        success: true,
+        movie: manualMovie,
+        message: `"${manualMovie.title}" adicionado ao catálogo com sucesso!`
+      });
     } catch (err: any) {
-      console.error("Erro ao importar direto do TMDB:", err);
-      res.status(500).json({ error: err.message });
+      console.error("Erro ao importar direto do TMDB/Calendário:", err);
+      res.status(500).json({ error: err.message || "Erro interno ao adicionar título." });
     }
   });
 
@@ -1105,6 +1202,10 @@ async function startServer() {
         return res.status(404).json({ error: "Usuário não encontrado." });
       }
 
+      if (user.status === "banned") {
+        return res.status(403).json({ error: "Sua conta foi bloqueada/banida por um administrador." });
+      }
+
       const { password: _, ...userWithoutPassword } = user;
       res.json({
         success: true,
@@ -1136,6 +1237,15 @@ async function startServer() {
         return res.status(401).json({ 
           error: "E-mail não cadastrado.",
           details: "Não encontramos uma conta com este e-mail. Caso seja seu primeiro acesso, clique na opção 'Cadastre-se grátis'."
+        });
+      }
+
+      if (user.status === "banned") {
+        return res.status(403).json({
+          success: false,
+          banned: true,
+          error: "Conta Bloqueada",
+          details: "Seu acesso foi bloqueado ou banido por um administrador do sistema PipocaMax."
         });
       }
 
@@ -1185,6 +1295,7 @@ async function startServer() {
         email,
         password,
         role: role === "admin" ? "admin" : "user",
+        status: "active",
         createdAt: new Date().toISOString()
       };
 
@@ -1200,11 +1311,33 @@ async function startServer() {
             email: newUser.email,
             password: newUser.password,
             role: newUser.role,
+            status: "active",
             createdAt: newUser.createdAt
           });
           console.log("Usuário cadastrado com sucesso no Firestore!");
         } catch (e: any) {
           console.error("Erro ao cadastrar usuário no Firestore (prosseguindo com login local):", e);
+        }
+      }
+
+      // Automatically generate a personalized welcome notification for the new user
+      const welcomeNotification = {
+        id: "notif_welcome_" + Math.random().toString(36).substring(2, 9),
+        userEmail: newUser.email,
+        target: "user",
+        type: "success",
+        title: "Bem-vindo(a) ao PipocaMax! 🍿",
+        message: `Olá ${newUser.name}! Sua conta foi criada com sucesso. Sinta-se à vontade para explorar nosso catálogo e aproveitar os melhores filmes, séries e animes.`,
+        read: false,
+        createdAt: new Date().toISOString()
+      };
+
+      localNotificationsList.unshift(welcomeNotification);
+      if (db) {
+        try {
+          await db.collection("notifications").doc(welcomeNotification.id).set(welcomeNotification);
+        } catch (e: any) {
+          console.warn("Erro ao salvar notificação de boas-vindas no Firestore:", e);
         }
       }
 
@@ -1255,6 +1388,7 @@ async function startServer() {
         email,
         password,
         role,
+        status: "active",
         createdAt: new Date().toISOString()
       };
 
@@ -1268,6 +1402,7 @@ async function startServer() {
             email: newUser.email,
             password: newUser.password,
             role: newUser.role,
+            status: "active",
             createdAt: newUser.createdAt
           });
         } catch (e) {
@@ -1349,6 +1484,76 @@ async function startServer() {
     } catch (err: any) {
       console.error("Erro ao atualizar papel do usuário:", err);
       res.status(500).json({ error: "Erro ao atualizar nível de acesso do usuário." });
+    }
+  });
+
+  // Users management API: toggle block/ban user status (active <-> banned)
+  app.put("/api/users/:id/status", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body; // "active" or "banned"
+
+      if (!status || (status !== "active" && status !== "banned")) {
+        return res.status(400).json({ error: "O status é obrigatório e deve ser 'active' ou 'banned'." });
+      }
+
+      // Sync users from DB first
+      await fetchUsersFromDb();
+
+      let targetUser = localUsersList.find(
+        u => u.id === id || (u.email && u.email.trim().toLowerCase() === id.trim().toLowerCase())
+      );
+
+      if (!targetUser) {
+        return res.status(404).json({ error: "Usuário não encontrado." });
+      }
+
+      if (targetUser.id === "admin-default" || (targetUser.email && targetUser.email.trim().toLowerCase() === "admin@pipocamax.com")) {
+        return res.status(400).json({ error: "O administrador principal não pode ser bloqueado ou banido." });
+      }
+
+      targetUser.status = status;
+      const targetEmail = (targetUser?.email || (id.includes("@") ? id : "")).trim().toLowerCase();
+
+      localUsersList.forEach(u => {
+        if (u.id === id || (targetEmail && u.email && u.email.trim().toLowerCase() === targetEmail)) {
+          u.status = status;
+        }
+      });
+
+      // Update in Firestore
+      const db = getFirestoreDb();
+      if (db) {
+        try {
+          await db.collection("users").doc(id).set({ status }, { merge: true });
+
+          if (targetUser && targetUser.id && targetUser.id !== id) {
+            await db.collection("users").doc(targetUser.id).set({ status }, { merge: true });
+          }
+
+          if (targetEmail) {
+            const querySnap = await db.collection("users").where("email", "==", targetEmail).get();
+            if (!querySnap.empty) {
+              for (const docSnap of querySnap.docs) {
+                await db.collection("users").doc(docSnap.id).set({ status }, { merge: true });
+              }
+            }
+          }
+          console.log(`[Firestore] Status do usuário ${targetEmail} alterado para: ${status}`);
+        } catch (e: any) {
+          console.error("Erro ao alterar status no Firestore:", e);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: status === "banned" ? "Usuário bloqueado/banido com sucesso." : "Usuário desbloqueado com sucesso.",
+        status,
+        userId: targetUser.id
+      });
+    } catch (err: any) {
+      console.error("Erro ao alterar status do usuário:", err);
+      res.status(500).json({ error: "Erro ao alterar status do usuário." });
     }
   });
 
@@ -1497,20 +1702,21 @@ async function startServer() {
   app.post("/api/reports", async (req, res) => {
     try {
       const { userId, userName, userEmail, movieId, movieTitle, reason, description } = req.body;
+      const finalEmail = (userEmail || (req.headers["x-user-email"] as string) || "usuario@pipocamax.com").trim().toLowerCase();
 
-      if (!userEmail || !description) {
-        return res.status(400).json({ error: "E-mail de usuário e descrição do problema são obrigatórios para reportar." });
+      if (!description || !description.trim()) {
+        return res.status(400).json({ error: "Descrição do problema é obrigatória para reportar." });
       }
 
       const newReport = {
         id: "rep_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5),
         userId: userId || "user_anon",
         userName: userName || "Usuário PipocaMax",
-        userEmail: userEmail.toLowerCase(),
+        userEmail: finalEmail,
         movieId: movieId || "",
-        movieTitle: movieTitle || "Geral",
+        movieTitle: movieTitle || "Geral / Site",
         reason: reason || "Problema no site",
-        description,
+        description: description.trim(),
         status: "Pendente",
         createdAt: new Date().toISOString()
       };
@@ -1565,27 +1771,37 @@ async function startServer() {
     }
   });
 
-  // Reporting API: Update report status (Requires Admin)
+  // Reporting API: Update report status or send admin reply (Requires Admin)
   app.put("/api/reports/:id/status", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
-      const { status } = req.body;
+      const { status, adminReply } = req.body;
 
       if (!status) {
         return res.status(400).json({ error: "O campo status é obrigatório." });
       }
 
+      const replyTime = new Date().toISOString();
       const idx = localReportsList.findIndex(r => r.id === id);
       let targetReport = idx !== -1 ? localReportsList[idx] : null;
 
       if (idx !== -1) {
         localReportsList[idx].status = status;
+        if (adminReply !== undefined) {
+          localReportsList[idx].adminReply = adminReply;
+          localReportsList[idx].replyUpdatedAt = replyTime;
+        }
       }
 
       const db = getFirestoreDb();
       if (db) {
         try {
-          await db.collection("reports").doc(id).set({ status }, { merge: true });
+          const updateData: any = { status };
+          if (adminReply !== undefined) {
+            updateData.adminReply = adminReply;
+            updateData.replyUpdatedAt = replyTime;
+          }
+          await db.collection("reports").doc(id).set(updateData, { merge: true });
           if (!targetReport) {
             const docSnap = await db.collection("reports").doc(id).get();
             if (docSnap.exists) {
@@ -1597,15 +1813,17 @@ async function startServer() {
         }
       }
 
-      // If status was updated to "Em Análise" or "Resolvido", notify the user!
-      if (targetReport && targetReport.userEmail && (status === "Em Análise" || status === "Resolvido")) {
-        const notifTitle = status === "Em Análise" 
-          ? "Denúncia em Análise 🔍" 
-          : "Bug / Problema Resolvido! 🍿";
+      // If status was updated or admin replied, notify the user!
+      if (targetReport && targetReport.userEmail) {
+        const notifTitle = adminReply
+          ? (status === "Resolvido" ? "Denúncia Resolvida com Sucesso! 🍿" : "Resposta da Equipe PipocaMax 💬")
+          : (status === "Em Análise" ? "Denúncia em Análise 🔍" : "Bug / Problema Resolvido! 🍿");
 
-        const notifMsg = status === "Em Análise"
-          ? `Sua denúncia sobre "${targetReport.movieTitle || 'o site'}" foi recebida e agora está em análise pela equipe PipocaMax.`
-          : `Sua denúncia sobre "${targetReport.movieTitle || 'o site'}" foi analisada e resolvida pela equipe PipocaMax.`;
+        const notifMsg = adminReply
+          ? `[Equipe PipocaMax]: ${adminReply}`
+          : (status === "Em Análise"
+            ? `Sua denúncia sobre "${targetReport.movieTitle || 'o site'}" foi recebida e agora está em análise pela equipe PipocaMax.`
+            : `Sua denúncia sobre "${targetReport.movieTitle || 'o site'}" foi analisada e resolvida pela equipe PipocaMax.`);
 
         const notification = {
           id: "notif_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5),
@@ -1613,9 +1831,11 @@ async function startServer() {
           title: notifTitle,
           message: notifMsg,
           reportId: id,
+          movieId: targetReport.movieId || "",
           status: status,
+          type: status === "Resolvido" ? "success" : "info",
           read: false,
-          createdAt: new Date().toISOString()
+          createdAt: replyTime
         };
 
         localNotificationsList.unshift(notification);
@@ -1630,7 +1850,7 @@ async function startServer() {
         }
       }
 
-      res.json({ success: true, message: `Status do relatório alterado para ${status}` });
+      res.json({ success: true, message: `Status do relatório alterado para ${status}`, report: targetReport });
     } catch (err) {
       console.error("Erro ao atualizar status do relatório:", err);
       res.status(500).json({ error: "Erro ao atualizar relatório." });
@@ -1648,6 +1868,7 @@ async function startServer() {
       const users = await fetchUsersFromDb();
       const currentUser = users.find(u => u.email && u.email.trim().toLowerCase() === email);
       const isUserAdmin = currentUser?.role === "admin";
+      const userCreatedAt = currentUser?.createdAt ? new Date(currentUser.createdAt).getTime() : 0;
 
       const all = await fetchNotificationsFromDb();
       
@@ -1656,8 +1877,29 @@ async function startServer() {
           if (!n) return false;
           const nEmail = (n.userEmail || "").toLowerCase();
           const target = n.target || "all";
+          const nCreatedAt = n.createdAt ? new Date(n.createdAt).getTime() : 0;
+          
+          const titleMsg = ((n.title || "") + " " + (n.message || "")).toLowerCase();
+          const isMaintenanceNotif = titleMsg.includes("manutenç") || titleMsg.includes("manutenc");
 
+          // Skip maintenance notifications if maintenance is no longer enabled, or if older than 24h, or created before user registered
+          if (isMaintenanceNotif) {
+            if (!localMaintenanceConfig.enabled) return false;
+            const now = Date.now();
+            const ageHours = nCreatedAt > 0 ? (now - nCreatedAt) / (1000 * 60 * 60) : 999;
+            if (ageHours > 24) return false;
+            if (userCreatedAt > 0 && nCreatedAt > 0 && nCreatedAt < userCreatedAt - 60000) return false;
+          }
+
+          // If targeted specifically to this user's email
           if (nEmail === email) return true;
+
+          // For broadcast messages ("all", "users", "admins"):
+          // Filter out broadcast messages that were created before the user registered their account
+          if (userCreatedAt > 0 && nCreatedAt > 0 && nCreatedAt < userCreatedAt - 60000) {
+            return false;
+          }
+
           if (nEmail === "all" || target === "all") return true;
           if (target === "admins" && isUserAdmin) return true;
           if (target === "users" && !isUserAdmin) return true;
@@ -1688,16 +1930,16 @@ async function startServer() {
         return res.status(400).json({ error: "E-mail do usuário é obrigatório." });
       }
 
-      const emailLower = email.toLowerCase();
+      const emailLower = email.toLowerCase().trim();
       
       localNotificationsList.forEach(n => {
-        if (n.userEmail && n.userEmail.toLowerCase() === emailLower) {
+        if (!Array.isArray(n.readBy)) n.readBy = [];
+        if (!n.readBy.includes(emailLower)) {
+          n.readBy.push(emailLower);
+        }
+        const nEmail = (n.userEmail || "").toLowerCase();
+        if (nEmail === emailLower) {
           n.read = true;
-        } else if (n.userEmail === "all" || n.target === "all" || n.target === "admins" || n.target === "users") {
-          if (!Array.isArray(n.readBy)) n.readBy = [];
-          if (!n.readBy.includes(emailLower)) {
-            n.readBy.push(emailLower);
-          }
         }
       });
 
@@ -1709,15 +1951,22 @@ async function startServer() {
             const updatePromises: Promise<any>[] = [];
             snapshot.forEach((docSnap: any) => {
               const data = docSnap.data ? docSnap.data() : {};
-              if (data && data.userEmail && data.userEmail.toLowerCase() === emailLower) {
-                updatePromises.push(db.collection("notifications").doc(docSnap.id).update({ read: true }));
-              } else if (data && (data.userEmail === "all" || data.target === "all" || data.target === "admins" || data.target === "users")) {
-                const currentReadBy = Array.isArray(data.readBy) ? data.readBy : [];
-                if (!currentReadBy.includes(emailLower)) {
-                  updatePromises.push(db.collection("notifications").doc(docSnap.id).update({
-                    readBy: [...currentReadBy, emailLower]
-                  }));
-                }
+              if (!data) return;
+
+              const currentReadBy = Array.isArray(data.readBy) ? data.readBy : [];
+              const needsReadByUpdate = !currentReadBy.includes(emailLower);
+              const isDirectUser = data.userEmail && data.userEmail.toLowerCase() === emailLower;
+
+              const updatePayload: any = {};
+              if (isDirectUser && !data.read) {
+                updatePayload.read = true;
+              }
+              if (needsReadByUpdate) {
+                updatePayload.readBy = [...currentReadBy, emailLower];
+              }
+
+              if (Object.keys(updatePayload).length > 0) {
+                updatePromises.push(db.collection("notifications").doc(docSnap.id).update(updatePayload));
               }
             });
             await Promise.all(updatePromises);
@@ -2017,6 +2266,136 @@ async function startServer() {
     } catch (err: any) {
       console.error("Erro ao remover título:", err);
       res.status(500).json({ error: "Erro interno ao remover título." });
+    }
+  });
+
+  // Release Calendar API Proxy with in-memory cache
+  let cachedCalendarData: any[] | null = null;
+  let cachedCalendarTime: number = 0;
+
+  app.get("/api/calendar", async (_req, res) => {
+    try {
+      const now = Date.now();
+      // Use cache if under 15 minutes old
+      if (cachedCalendarData && now - cachedCalendarTime < 15 * 60 * 1000) {
+        return res.json({ success: true, data: cachedCalendarData, cached: true });
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+      const response = await fetch("https://superflixapi.pro/calendario.php", {
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timeoutId));
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const rawData = await response.json();
+      if (Array.isArray(rawData) && rawData.length > 0) {
+        cachedCalendarData = rawData;
+        cachedCalendarTime = now;
+        return res.json({ success: true, data: rawData, cached: false });
+      }
+
+      if (cachedCalendarData) {
+        return res.json({ success: true, data: cachedCalendarData, cached: true });
+      }
+
+      return res.json({ success: true, data: [] });
+    } catch (err: any) {
+      console.warn("Erro ao buscar calendário em superflixapi.pro:", err?.message || err);
+      if (cachedCalendarData && cachedCalendarData.length > 0) {
+        return res.json({ success: true, data: cachedCalendarData, cached: true });
+      }
+      return res.json({
+        success: false,
+        error: "Não foi possível carregar o calendário remoto no momento. Tente novamente em alguns instantes.",
+        data: [],
+      });
+    }
+  });
+
+  // SEO: robots.txt
+  app.get("/robots.txt", (req, res) => {
+    res.type("text/plain");
+    const host = req.headers.host || "pipocamax.com";
+    const protocol = req.headers["x-forwarded-proto"] || "https";
+    const baseUrl = `${protocol}://${host}`;
+    res.send(
+      `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /admin\nSitemap: ${baseUrl}/sitemap.xml\n`
+    );
+  });
+
+  // SEO: Dynamic XML Sitemap
+  app.get("/sitemap.xml", async (req, res) => {
+    res.type("application/xml");
+    try {
+      const host = req.headers.host || "pipocamax.com";
+      const protocol = req.headers["x-forwarded-proto"] || "https";
+      const baseUrl = `${protocol}://${host}`;
+      const nowIso = new Date().toISOString();
+
+      let catalogMovies = localMoviesList || MOVIES_DATA;
+      try {
+        const db = getFirestoreDb();
+        if (db) {
+          const docSnap = await db.collection("movies").doc("catalog").get();
+          if (docSnap.exists() && Array.isArray(docSnap.data()?.movies) && docSnap.data().movies.length > 0) {
+            catalogMovies = docSnap.data().movies;
+          }
+        }
+      } catch (e) {
+        // Fallback to localMoviesList / MOVIES_DATA
+      }
+
+      let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+      xml += `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n`;
+
+      // Static Main Pages
+      const mainRoutes = [
+        { url: "/", priority: "1.0", changefreq: "daily" },
+        { url: "/?type=filme", priority: "0.9", changefreq: "daily" },
+        { url: "/?type=serie", priority: "0.9", changefreq: "daily" },
+        { url: "/?type=anime", priority: "0.9", changefreq: "daily" },
+      ];
+
+      mainRoutes.forEach((route) => {
+        const fullLoc = `${baseUrl}${route.url}`.replace(/&/g, "&amp;");
+        xml += `  <url>\n`;
+        xml += `    <loc>${fullLoc}</loc>\n`;
+        xml += `    <lastmod>${nowIso}</lastmod>\n`;
+        xml += `    <changefreq>${route.changefreq}</changefreq>\n`;
+        xml += `    <priority>${route.priority}</priority>\n`;
+        xml += `  </url>\n`;
+      });
+
+      // Catalog Items (Movies / Series / Animes)
+      catalogMovies.forEach((m: any) => {
+        const mediaParam = encodeURIComponent(m.id || m.title || "midia");
+        const rawUrl = `${baseUrl}/?media=${mediaParam}`;
+        const escapedUrl = rawUrl.replace(/&/g, "&amp;");
+        xml += `  <url>\n`;
+        xml += `    <loc>${escapedUrl}</loc>\n`;
+        xml += `    <lastmod>${nowIso}</lastmod>\n`;
+        xml += `    <changefreq>weekly</changefreq>\n`;
+        xml += `    <priority>0.8</priority>\n`;
+        if (m.posterUrl || m.backdropUrl) {
+          const imgUrl = (m.posterUrl || m.backdropUrl).replace(/&/g, "&amp;");
+          const imgTitle = (m.title || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          xml += `    <image:image>\n`;
+          xml += `      <image:loc>${imgUrl}</image:loc>\n`;
+          xml += `      <image:title>${imgTitle}</image:title>\n`;
+          xml += `    </image:image>\n`;
+        }
+        xml += `  </url>\n`;
+      });
+
+      xml += `</urlset>`;
+      res.send(xml);
+    } catch (err) {
+      console.error("Erro ao gerar sitemap.xml:", err);
+      res.status(500).send("<error>Erro ao gerar sitemap</error>");
     }
   });
 

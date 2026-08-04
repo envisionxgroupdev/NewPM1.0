@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Popcorn, Search, Zap, Film, Bookmark, Tv, Clapperboard, Shield, LogIn, Info, Bell, CheckCircle2, X } from "lucide-react";
+import { Popcorn, Search, Zap, Film, Bookmark, Tv, Clapperboard, Shield, LogIn, Info, Bell, CheckCircle2, X, Calendar, Star, ArrowRight } from "lucide-react";
 
 interface HeaderProps {
   searchQuery: string;
@@ -30,21 +30,62 @@ export default function Header({
 }: HeaderProps) {
   const [showBetaTooltip, setShowBetaTooltip] = useState(false);
 
+  // Debounced search state to prevent lag and excessive re-renders on keystrokes
+  const [localSearchTerm, setLocalSearchTerm] = useState(searchQuery);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Compute live search suggestions based on title, original title, genres, director, or cast
+  const searchSuggestions = (movies || []).filter((movie) => {
+    const q = localSearchTerm.trim().toLowerCase();
+    if (!q) return false;
+    const title = String(movie.title || "").toLowerCase();
+    const origTitle = String(movie.originalTitle || "").toLowerCase();
+    const genresStr = Array.isArray(movie.genres) ? movie.genres.join(" ") : String(movie.genres || "");
+    const genres = genresStr.toLowerCase();
+    const director = String(movie.director || "").toLowerCase();
+    const castStr = Array.isArray(movie.cast) ? movie.cast.join(" ") : String(movie.cast || "");
+    const cast = castStr.toLowerCase();
+    return title.includes(q) || origTitle.includes(q) || genres.includes(q) || director.includes(q) || cast.includes(q);
+  }).slice(0, 6);
+
+  // Keep local search term in sync when external searchQuery changes (e.g., cleared on tab switch)
+  useEffect(() => {
+    setLocalSearchTerm(searchQuery);
+  }, [searchQuery]);
+
+  // Debounce pushing local value to parent searchQuery state (300ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (localSearchTerm !== searchQuery) {
+        setSearchQuery(localSearchTerm);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [localSearchTerm, searchQuery, setSearchQuery]);
+
+  const handleClearSearch = () => {
+    setLocalSearchTerm("");
+    setSearchQuery("");
+  };
+
   // Notification Bell state
   const [notifications, setNotifications] = useState<any[]>([]);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
 
   // Fetch notifications for logged-in user
   const fetchNotifications = async () => {
-    if (!currentUser?.email) return;
+    if (!currentUser || typeof currentUser.email !== "string") return;
+    const cleanEmail = currentUser.email.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim().toLowerCase();
+    if (!cleanEmail) return;
     try {
-      const response = await fetch(`/api/notifications/my?email=${encodeURIComponent(currentUser.email)}`);
+      const response = await fetch(`/api/notifications/my?email=${encodeURIComponent(cleanEmail)}`);
       if (response.ok) {
         const data = await response.json();
-        setNotifications(data.notifications || []);
+        setNotifications(Array.isArray(data.notifications) ? data.notifications : []);
       }
     } catch (err) {
-      console.error("Erro ao carregar notificações:", err);
+      console.warn("Não foi possível carregar notificações no momento:", err);
     }
   };
 
@@ -59,16 +100,21 @@ export default function Header({
   }, [currentUser]);
 
   const handleMarkAllRead = async () => {
-    if (!currentUser?.email) return;
+    if (!currentUser || typeof currentUser.email !== "string") return;
+    const cleanEmail = currentUser.email.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim().toLowerCase();
+    if (!cleanEmail) return;
+
+    // Optimistically update React state so the bell stops pulsing/blinking instantly
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+
     try {
       await fetch("/api/notifications/read-all", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: currentUser.email }),
+        body: JSON.stringify({ email: cleanEmail }),
       });
-      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
     } catch (err) {
-      console.error("Erro ao marcar notificações como lidas:", err);
+      console.warn("Não foi possível marcar notificações como lidas:", err);
     }
   };
 
@@ -194,24 +240,42 @@ export default function Header({
 
         <button
           onClick={() => {
-            setActiveTab("favorites");
+            setActiveTab("calendar");
             setSearchQuery("");
           }}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs md:text-sm font-semibold transition-all relative cursor-pointer ${
-            activeTab === "favorites"
-              ? "bg-brand-primary text-white shadow-md shadow-red-600/20"
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs md:text-sm font-semibold transition-all cursor-pointer ${
+            activeTab === "calendar"
+              ? "bg-brand-primary text-white shadow-md shadow-red-600/20 text-red-400"
               : "text-gray-400 hover:text-white"
           }`}
-          id="nav-favorites"
+          id="nav-calendar"
         >
-          <Bookmark className="w-3.5 h-3.5" />
-          <span>Minha Lista</span>
-          {favoritesCount > 0 && (
-            <span className="absolute -top-1 -right-1 bg-red-600 text-white font-mono font-bold text-[9px] w-4 h-4 flex items-center justify-center rounded-full border border-black animate-pulse">
-              {favoritesCount}
-            </span>
-          )}
+          <Calendar className="w-3.5 h-3.5" />
+          <span>Calendário</span>
         </button>
+
+        {currentUser && (
+          <button
+            onClick={() => {
+              setActiveTab("favorites");
+              setSearchQuery("");
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs md:text-sm font-semibold transition-all relative cursor-pointer ${
+              activeTab === "favorites"
+                ? "bg-brand-primary text-white shadow-md shadow-red-600/20"
+                : "text-gray-400 hover:text-white"
+            }`}
+            id="nav-favorites"
+          >
+            <Bookmark className="w-3.5 h-3.5" />
+            <span>Minha Lista</span>
+            {favoritesCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-600 text-white font-mono font-bold text-[9px] w-4 h-4 flex items-center justify-center rounded-full border border-black animate-pulse">
+                {favoritesCount}
+              </span>
+            )}
+          </button>
+        )}
 
         {currentUser?.role === "admin" && (
           <button
@@ -234,18 +298,143 @@ export default function Header({
 
       {/* Search Bar & User Control */}
       <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full lg:w-auto relative">
-        <div className="relative w-full lg:w-56">
+        <div className="relative w-full lg:w-64">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
             <Search className="h-4 w-4 text-gray-500" />
           </div>
           <input
             type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            value={localSearchTerm}
+            onChange={(e) => {
+              setLocalSearchTerm(e.target.value);
+              setShowSuggestions(true);
+            }}
+            onFocus={() => setShowSuggestions(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setShowSuggestions(false);
+                handleClearSearch();
+              } else if (e.key === "Enter") {
+                setShowSuggestions(false);
+                setSearchQuery(localSearchTerm);
+              }
+            }}
             placeholder="Buscar filmes, séries..."
-            className="block w-full pl-10 pr-4 py-2 border border-gray-800 rounded-full bg-black text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-600/40 focus:border-red-600/60 text-xs transition-all"
+            className="block w-full pl-10 pr-9 py-2 border border-gray-800 rounded-full bg-black text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-600/40 focus:border-red-600/60 text-xs transition-all"
             id="search-input"
           />
+          {localSearchTerm && (
+            <button
+              onClick={() => {
+                handleClearSearch();
+                setShowSuggestions(false);
+              }}
+              className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-white transition-colors cursor-pointer"
+              title="Limpar busca"
+              type="button"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {/* Autocomplete Suggestions Dropdown */}
+          {showSuggestions && localSearchTerm.trim().length >= 1 && (
+            <>
+              {/* Click-outside backdrop to close suggestions */}
+              <div
+                className="fixed inset-0 z-40 bg-transparent"
+                onClick={() => setShowSuggestions(false)}
+              />
+
+              <div
+                className="absolute top-full left-0 right-0 sm:w-80 sm:left-auto sm:right-0 mt-2 bg-[#0c0c0c] border border-gray-800 rounded-2xl shadow-2xl z-50 overflow-hidden animate-fade-in flex flex-col divide-y divide-gray-900"
+                id="search-suggestions-dropdown"
+              >
+                <div className="p-2.5 bg-black/90 flex items-center justify-between text-[11px] font-bold text-gray-400">
+                  <span className="flex items-center gap-1.5 text-red-400 font-extrabold">
+                    <Search className="w-3.5 h-3.5" />
+                    Sugestões para "{localSearchTerm}"
+                  </span>
+                  <span className="text-[10px] text-gray-500 font-mono">
+                    {searchSuggestions.length} encontrada(s)
+                  </span>
+                </div>
+
+                <div className="max-h-72 overflow-y-auto no-scrollbar py-1">
+                  {searchSuggestions.length > 0 ? (
+                    searchSuggestions.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          setShowSuggestions(false);
+                          if (onMovieClick) {
+                            onMovieClick(item);
+                          } else {
+                            setSearchQuery(item.title);
+                          }
+                        }}
+                        className="w-full p-2 hover:bg-gray-900/90 transition-colors flex items-center gap-3 text-left cursor-pointer group"
+                      >
+                        <img
+                          src={item.backdropUrl || item.posterUrl}
+                          alt={item.title}
+                          className="w-10 h-12 object-cover rounded-lg border border-gray-800/80 group-hover:border-red-600/50 shrink-0 transition-colors"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            <span className={`text-[9px] font-black uppercase px-1.5 py-0.2 rounded border ${
+                              item.type === "serie" 
+                                ? "bg-blue-950/80 text-blue-400 border-blue-800/50" 
+                                : item.type === "anime" 
+                                ? "bg-purple-950/80 text-purple-400 border-purple-800/50" 
+                                : "bg-red-950/80 text-red-400 border-red-800/50"
+                            }`}>
+                              {item.type === "serie" ? "Série" : item.type === "anime" ? "Anime" : "Filme"}
+                            </span>
+                            {item.year && (
+                              <span className="text-[10px] text-gray-400 font-mono">{item.year}</span>
+                            )}
+                            {item.rating && (
+                              <span className="text-[10px] text-amber-400 font-bold flex items-center gap-0.5 ml-auto">
+                                <Star className="w-2.5 h-2.5 fill-amber-400" />
+                                {item.rating}
+                              </span>
+                            )}
+                          </div>
+                          <h5 className="font-bold text-xs text-white truncate group-hover:text-red-400 transition-colors">
+                            {item.title}
+                          </h5>
+                          <p className="text-[10px] text-gray-400 truncate mt-0.5">
+                            {Array.isArray(item.genres) ? item.genres.join(" • ") : (item.genres || item.originalTitle || "Mídia HD")}
+                          </p>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="p-4 text-center space-y-1">
+                      <p className="text-xs text-gray-300 font-medium">Nenhum título encontrado para "{localSearchTerm}"</p>
+                      <p className="text-[10px] text-gray-500">Tente buscar por outro termo ou gênero.</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-2 bg-black/95 text-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSuggestions(false);
+                      setSearchQuery(localSearchTerm);
+                    }}
+                    className="w-full py-1.5 px-3 bg-red-950/40 hover:bg-red-900/60 border border-red-800/40 text-red-300 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Ver todos os resultados no catálogo</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         {/* NOTIFICATION BELL BUTTON */}
@@ -253,8 +442,9 @@ export default function Header({
           <div className="relative">
             <button
               onClick={() => {
-                setIsNotifOpen(!isNotifOpen);
-                if (unreadCount > 0) {
+                const nextState = !isNotifOpen;
+                setIsNotifOpen(nextState);
+                if (nextState || unreadCount > 0) {
                   handleMarkAllRead();
                 }
               }}

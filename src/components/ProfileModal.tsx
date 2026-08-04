@@ -327,14 +327,20 @@ export default function ProfileModal({
             </div>
           )}
 
-          {/* TAB 2: User Reports */}
+          {/* TAB 2: User Reports & Messages */}
           {activeTab === "reports" && (
             <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                  <Flag className="w-4 h-4 text-brand-primary" />
-                  Histórico de Denúncias e Relatórios
-                </h3>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-black/60 border border-gray-900 p-3.5 rounded-2xl">
+                <div>
+                  <h3 className="font-extrabold text-sm text-white flex items-center gap-2">
+                    <Flag className="w-4 h-4 text-brand-primary" />
+                    <span>Minhas Denúncias & Atendimento</span>
+                  </h3>
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    Acompanhe em tempo real a correção dos problemas reportados
+                  </p>
+                </div>
+
                 <div className="flex items-center gap-2">
                   {onOpenWebsiteBugModal && (
                     <button
@@ -342,7 +348,7 @@ export default function ProfileModal({
                         onClose();
                         onOpenWebsiteBugModal();
                       }}
-                      className="text-xs font-bold text-amber-400 bg-amber-950/60 hover:bg-amber-900/80 border border-amber-800/60 px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
+                      className="text-xs font-bold text-amber-400 bg-amber-950/60 hover:bg-amber-900/80 border border-amber-800/60 px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-sm hover:scale-[1.02]"
                     >
                       <Bug className="w-3.5 h-3.5 text-amber-400" />
                       <span>Bug no Site</span>
@@ -354,48 +360,103 @@ export default function ProfileModal({
                         onClose();
                         onOpenReportModal();
                       }}
-                      className="text-xs font-bold text-white bg-brand-primary hover:bg-brand-secondary px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
+                      className="text-xs font-bold text-white bg-brand-primary hover:bg-brand-secondary px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-sm hover:scale-[1.02]"
                     >
                       <Flag className="w-3.5 h-3.5" />
-                      <span>Problema no Filme</span>
+                      <span>Reportar Título</span>
                     </button>
                   )}
                 </div>
               </div>
 
               {loadingReports ? (
-                <div className="p-8 text-center text-xs text-gray-500">Carregando suas denúncias...</div>
+                <div className="p-12 text-center text-xs text-gray-500">
+                  Carregando o histórico das suas solicitações...
+                </div>
               ) : userReports.length > 0 ? (
-                <div className="space-y-3">
-                  {userReports.map((report) => (
-                    <div
-                      key={report.id}
-                      className="bg-black/80 border border-gray-900 rounded-2xl p-4 space-y-2"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <span className="text-xs font-extrabold text-white block">
-                            {report.movieTitle || "Denúncia Geral"}
-                          </span>
-                          <span className="text-[11px] font-semibold text-red-400 block mt-0.5">
-                            Motivo: {report.reason}
-                          </span>
+                <div className="space-y-3.5">
+                  {userReports.map((report) => {
+                    const isResolved = report.status === "Resolvido";
+                    const isAnalyzing = report.status === "Em Análise";
+
+                    return (
+                      <div
+                        key={report.id}
+                        className={`bg-[#0a0a0a] border rounded-2xl p-4 sm:p-5 space-y-3.5 transition-all shadow-lg ${
+                          isResolved 
+                            ? "border-emerald-950/80 bg-gradient-to-b from-[#0a120c] to-[#080a08]" 
+                            : isAnalyzing
+                            ? "border-blue-950/80 bg-gradient-to-b from-[#0a1018] to-[#08080c]"
+                            : "border-gray-900 hover:border-gray-800"
+                        }`}
+                      >
+                        {/* Header Row */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-0.5 min-w-0">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 block truncate">
+                              {report.reason}
+                            </span>
+                            <h4 className="text-sm font-extrabold text-white truncate">
+                              {report.movieTitle || "Denúncia Geral no Site"}
+                            </h4>
+                          </div>
+                          {getStatusBadge(report.status)}
                         </div>
-                        {getStatusBadge(report.status)}
-                      </div>
 
-                      <p className="text-xs text-gray-300 bg-[#0a0a0a] p-3 rounded-xl border border-gray-900 leading-relaxed">
-                        {report.description}
-                      </p>
+                        {/* User Description */}
+                        <div className="bg-black/80 p-3 rounded-xl border border-gray-900 text-xs text-gray-200 leading-relaxed">
+                          <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">O que você informou:</p>
+                          {report.description}
+                        </div>
 
-                      <div className="text-[10px] text-gray-500 flex items-center justify-between pt-1">
-                        <span>
-                          Enviado em: {new Date(report.createdAt).toLocaleDateString("pt-BR")} às {new Date(report.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
-                        </span>
-                        <span className="font-mono text-gray-600">ID: #{report.id.substring(0, 8)}</span>
+                        {/* Status Progress Bar */}
+                        <div className="bg-black/60 border border-gray-900 p-2.5 rounded-xl space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] font-bold text-gray-400">
+                            <span className={report.status ? "text-amber-400" : ""}>1. Recebido</span>
+                            <span className={isAnalyzing || isResolved ? "text-blue-400" : ""}>2. Em Análise</span>
+                            <span className={isResolved ? "text-emerald-400" : ""}>3. Corrigido</span>
+                          </div>
+                          <div className="w-full bg-gray-900 h-1.5 rounded-full overflow-hidden flex">
+                            <div className={`h-full transition-all duration-500 ${
+                              isResolved 
+                                ? "w-full bg-emerald-500" 
+                                : isAnalyzing 
+                                ? "w-2/3 bg-blue-500" 
+                                : "w-1/3 bg-amber-500"
+                            }`} />
+                          </div>
+                        </div>
+
+                        {/* Admin Direct Reply Callout Box if present */}
+                        {report.adminReply && (
+                          <div className="bg-gradient-to-r from-emerald-950/40 via-emerald-900/20 to-black border border-emerald-800/60 p-3.5 rounded-xl space-y-1.5 shadow-md">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                                <span>Resposta da Equipe PipocaMax</span>
+                              </span>
+                              {report.replyUpdatedAt && (
+                                <span className="text-[9px] text-gray-400">
+                                  {new Date(report.replyUpdatedAt).toLocaleDateString("pt-BR")} às {new Date(report.replyUpdatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-emerald-200 font-medium leading-relaxed bg-black/40 p-2.5 rounded-lg border border-emerald-900/40">
+                              "{report.adminReply}"
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Footer Details */}
+                        <div className="text-[10px] text-gray-500 flex items-center justify-between pt-1 border-t border-gray-900/80">
+                          <span>
+                            Enviado em: {new Date(report.createdAt).toLocaleDateString("pt-BR")} às {new Date(report.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                          <span className="font-mono text-gray-600">ID: #{report.id.substring(0, 8)}</span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="p-12 text-center bg-black/40 border border-gray-900 rounded-2xl space-y-3">

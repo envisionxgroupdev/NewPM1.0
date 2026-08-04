@@ -10,6 +10,7 @@ interface MovieCardProps {
   isFavorite: boolean;
   onToggleFavorite: (movie: Movie, e: React.MouseEvent) => void;
   isRecent?: boolean;
+  currentUser?: any;
 }
 
 export default function MovieCard({
@@ -18,6 +19,7 @@ export default function MovieCard({
   isFavorite,
   onToggleFavorite,
   isRecent,
+  currentUser,
 }: MovieCardProps) {
   return (
     <motion.div
@@ -48,18 +50,20 @@ export default function MovieCard({
         )}
 
         {/* Favorite Bookmark Button overlay */}
-        <button
-          onClick={(e) => onToggleFavorite(movie, e)}
-          className={`absolute top-2.5 right-2.5 z-10 p-2 rounded-full backdrop-blur-md border cursor-pointer hover:scale-110 active:scale-90 transition-all ${
-            isFavorite
-              ? "bg-brand-primary text-white border-brand-primary shadow-md shadow-red-600/35"
-              : "bg-black/60 border-white/10 text-white hover:bg-black/95 hover:border-white/30"
-          }`}
-          id={`movie-card-fav-btn-${movie.id}`}
-          title={isFavorite ? "Remover da minha lista" : "Adicionar à minha lista"}
-        >
-          {isFavorite ? <BookmarkCheck className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
-        </button>
+        {currentUser && (
+          <button
+            onClick={(e) => onToggleFavorite(movie, e)}
+            className={`absolute top-2.5 right-2.5 z-10 p-2 rounded-full backdrop-blur-md border cursor-pointer hover:scale-110 active:scale-90 transition-all ${
+              isFavorite
+                ? "bg-brand-primary text-white border-brand-primary shadow-md shadow-red-600/35"
+                : "bg-black/60 border-white/10 text-white hover:bg-black/95 hover:border-white/30"
+            }`}
+            id={`movie-card-fav-btn-${movie.id}`}
+            title={isFavorite ? "Remover da minha lista" : "Adicionar à minha lista"}
+          >
+            {isFavorite ? <BookmarkCheck className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
+          </button>
+        )}
 
         {/* Play Icon / Details Hover Overlay */}
         <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity duration-300">

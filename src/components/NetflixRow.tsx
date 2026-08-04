@@ -16,6 +16,7 @@ interface NetflixRowProps {
   seeAllLabel?: string;
   badge?: string;
   maxItems?: number;
+  currentUser?: any;
 }
 
 export default function NetflixRow({
@@ -31,6 +32,7 @@ export default function NetflixRow({
   seeAllLabel = "Ver Todos",
   badge,
   maxItems = 20,
+  currentUser,
 }: NetflixRowProps) {
   const rowRef = useRef<HTMLDivElement>(null);
 
@@ -110,6 +112,7 @@ export default function NetflixRow({
                 isFavorite={favorites.includes(movie.id)}
                 onToggleFavorite={onToggleFavorite}
                 isRecent={recentMovieIds?.has(movie.id)}
+                currentUser={currentUser}
               />
             </div>
           ))}

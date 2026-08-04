@@ -3,8 +3,8 @@ import {
   Film, Tv, Sparkles, Plus, Edit, Trash2, Shield, Users, Check, X,
   FileSpreadsheet, Database, Sparkle, AlertTriangle, Loader2, Settings,
   Search, Filter, RotateCcw, Star, Zap, CheckCircle2,
-  Eye, EyeOff, Play, Square, Flag, Clock, UserPlus, User,
-  Bell, Send, Radio, Wrench, ShieldAlert
+  Eye, EyeOff, Play, Square, Flag, UserPlus, User,
+  Bell, Send, Radio, Wrench, ShieldAlert, Ban, Unlock, MessageSquare
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -40,6 +40,11 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
   const [reports, setReports] = useState<any[]>([]);
   const [reportsLoading, setReportsLoading] = useState(false);
   const [reportsFilter, setReportsFilter] = useState<"todos" | "Pendente" | "Em Análise" | "Resolvido">("todos");
+  const [reportsSearchQuery, setReportsSearchQuery] = useState("");
+  const [replyingReportId, setReplyingReportId] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [replyStatus, setReplyStatus] = useState<string>("Resolvido");
+  const [replySubmitting, setReplySubmitting] = useState(false);
 
   // Title Form states
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -73,7 +78,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
   const CATALOG_PAGE_SIZE = 20;
 
   const [userSearchTerm, setUserSearchTerm] = useState("");
-  const [userRoleFilter, setUserRoleFilter] = useState<"todos" | "admin" | "user">("todos");
+  const [userRoleFilter, setUserRoleFilter] = useState<"todos" | "admin" | "user" | "banned">("todos");
   const [usersPage, setUsersPage] = useState(1);
   const USERS_PAGE_SIZE = 20;
 
@@ -227,8 +232,10 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
       );
     }
 
-    if (userRoleFilter !== "todos") {
-      list = list.filter((u: any) => u.role === userRoleFilter);
+    if (userRoleFilter === "banned") {
+      list = list.filter((u: any) => u.status === "banned");
+    } else if (userRoleFilter !== "todos") {
+      list = list.filter((u: any) => u.role === userRoleFilter && u.status !== "banned");
     }
 
     const seen = new Set<string>();
@@ -868,6 +875,45 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
     });
   };
 
+  const handleSendReportReply = async (reportId: string) => {
+    if (!replyText.trim()) {
+      showToast("Por favor, digite uma mensagem de resposta para o usuário.", "info");
+      return;
+    }
+    setReplySubmitting(true);
+    try {
+      const response = await fetch(`/api/reports/${encodeURIComponent(reportId)}/status`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": currentUser?.email || ""
+        },
+        body: JSON.stringify({
+          status: replyStatus,
+          adminReply: replyText.trim()
+        })
+      });
+
+      if (response.ok) {
+        setReports(prev => prev.map(r => r.id === reportId ? { 
+          ...r, 
+          status: replyStatus, 
+          adminReply: replyText.trim(),
+          replyUpdatedAt: new Date().toISOString()
+        } : r));
+        showToast("Resposta enviada e usuário notificado com sucesso!", "success");
+        setReplyingReportId(null);
+        setReplyText("");
+      } else {
+        showToast("Falha ao enviar resposta para o relatório.", "error");
+      }
+    } catch (err) {
+      showToast("Erro ao conectar com o servidor.", "error");
+    } finally {
+      setReplySubmitting(false);
+    }
+  };
+
   // Open Form for Adding
   const handleOpenAdd = () => {
     setEditingMovie(null);
@@ -1163,6 +1209,59 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
             loadUsers();
           } else {
             showToast(`Erro ao alterar nível de acesso: ${data.error || "Ação não permitida"}`, "error");
+            loadUsers();
+          }
+        } catch (e) {
+          showToast("Erro ao conectar ao servidor.", "error");
+          loadUsers();
+        }
+      }
+    });
+  };
+
+  // Toggle User Ban/Block status
+  const handleToggleUserStatus = (userId: string, currentStatus: string, userName: string) => {
+    if (userId === "admin-default") {
+      showToast("O administrador principal padrão não pode ser bloqueado.", "info");
+      return;
+    }
+
+    if (userId === currentUser?.id) {
+      showToast("Você não pode bloquear sua própria conta enquanto estiver logado.", "info");
+      return;
+    }
+
+    const newStatus = currentStatus === "banned" ? "active" : "banned";
+    const statusLabel = newStatus === "banned" ? "Sim, Bloquear Acesso" : "Sim, Desbloquear Acesso";
+
+    setConfirmationModal({
+      isOpen: true,
+      title: newStatus === "banned" ? "Bloquear Acesso do Usuário" : "Desbloquear Usuário",
+      message: `Tem certeza que deseja ${newStatus === "banned" ? "bloquear o acesso de" : "desbloquear o acesso de"} "${userName}"? ${newStatus === "banned" ? "O usuário será desconectado e não conseguirá mais entrar na plataforma PipocaMax." : "O usuário poderá voltar a fazer login e acessar o sistema normalmente."}`,
+      confirmText: statusLabel,
+      cancelText: "Cancelar",
+      isDanger: newStatus === "banned",
+      onConfirm: async () => {
+        setConfirmationModal(null);
+
+        // Optimistically update local users state
+        setUsers(prev => prev.map(u => (u.id === userId || (u.email && u.email.toLowerCase() === userId.toLowerCase())) ? { ...u, status: newStatus } : u));
+
+        try {
+          const response = await fetch(`/api/users/${encodeURIComponent(userId)}/status`, {
+            method: "PUT",
+            headers: { 
+              "Content-Type": "application/json",
+              "x-user-email": currentUser?.email || ""
+            },
+            body: JSON.stringify({ status: newStatus })
+          });
+          const data = await response.json();
+          if (response.ok && data.success) {
+            showToast(data.message || (newStatus === "banned" ? "Usuário bloqueado com sucesso!" : "Usuário desbloqueado com sucesso!"), "success");
+            loadUsers();
+          } else {
+            showToast(`Erro ao alterar status: ${data.error || "Ação não permitida"}`, "error");
             loadUsers();
           }
         } catch (e) {
@@ -1710,6 +1809,17 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                   >
                     Comuns
                   </button>
+                  <button
+                    onClick={() => setUserRoleFilter("banned")}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                      userRoleFilter === "banned"
+                        ? "bg-red-600 text-white shadow-md"
+                        : "text-gray-400 hover:text-white"
+                    }`}
+                  >
+                    <Ban className="w-3 h-3" />
+                    <span>Bloqueados ({users.filter(u => u.status === "banned").length})</span>
+                  </button>
                 </div>
               </div>
 
@@ -1769,6 +1879,17 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
               >
                 Comuns
               </button>
+              <button
+                onClick={() => setUserRoleFilter("banned")}
+                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all text-center cursor-pointer flex items-center justify-center gap-1 ${
+                  userRoleFilter === "banned"
+                    ? "bg-red-600 text-white"
+                    : "text-gray-400"
+                }`}
+              >
+                <Ban className="w-3 h-3" />
+                <span>Bloq.</span>
+              </button>
             </div>
 
             {usersLoading ? (
@@ -1799,14 +1920,22 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                             <td className="py-3 px-4 font-bold text-gray-100">{u.name}</td>
                             <td className="py-3 px-4 text-gray-400 font-mono">{u.email}</td>
                             <td className="py-3 px-4">
-                              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${
-                                u.role === "admin"
-                                  ? "bg-red-950/40 border border-red-900/30 text-red-400"
-                                  : "bg-gray-950 border border-gray-900 text-gray-400"
-                              }`}>
-                                <Shield className="w-2.5 h-2.5" />
-                                {u.role === "admin" ? "Administrador" : "Usuário Comum"}
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                                  u.role === "admin"
+                                    ? "bg-red-950/40 border border-red-900/30 text-red-400"
+                                    : "bg-gray-950 border border-gray-900 text-gray-400"
+                                }`}>
+                                  <Shield className="w-2.5 h-2.5" />
+                                  {u.role === "admin" ? "Administrador" : "Usuário Comum"}
+                                </span>
+                                {u.status === "banned" && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-red-600/20 border border-red-500/50 text-red-400">
+                                    <Ban className="w-2.5 h-2.5" />
+                                    Bloqueado
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="py-3 px-4 text-right">
                               <div className="flex items-center justify-end gap-1.5">
@@ -1827,6 +1956,27 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                                   }`}
                                 >
                                   {u.role === "admin" ? "Tornar Comum" : "Tornar Admin"}
+                                </button>
+                                <button
+                                  onClick={() => handleToggleUserStatus(u.id, u.status, u.name)}
+                                  className={`text-[10px] font-bold px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer flex items-center gap-1 ${
+                                    u.status === "banned"
+                                      ? "bg-emerald-950/40 border-emerald-800/40 text-emerald-400 hover:bg-emerald-900 hover:text-white"
+                                      : "bg-red-950/40 border-red-900/40 text-red-400 hover:bg-red-900 hover:text-white"
+                                  }`}
+                                  title={u.status === "banned" ? "Desbloquear Usuário" : "Bloquear Usuário"}
+                                >
+                                  {u.status === "banned" ? (
+                                    <>
+                                      <Unlock className="w-3 h-3" />
+                                      <span>Desbloquear</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Ban className="w-3 h-3" />
+                                      <span>Bloquear</span>
+                                    </>
+                                  )}
                                 </button>
                                 <button
                                   onClick={() => handleDeleteUser(u.id, u.name)}
@@ -1857,14 +2007,22 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                           <h4 className="font-bold text-white text-sm">{u.name}</h4>
                           <p className="text-xs text-gray-400 font-mono">{u.email}</p>
                         </div>
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0 ${
-                          u.role === "admin"
-                            ? "bg-red-950/40 border border-red-900/30 text-red-400"
-                            : "bg-gray-950 border border-gray-900 text-gray-400"
-                        }`}>
-                          <Shield className="w-2.5 h-2.5" />
-                          {u.role === "admin" ? "Admin" : "Comum"}
-                        </span>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0 ${
+                            u.role === "admin"
+                              ? "bg-red-950/40 border border-red-900/30 text-red-400"
+                              : "bg-gray-950 border border-gray-900 text-gray-400"
+                          }`}>
+                            <Shield className="w-2.5 h-2.5" />
+                            {u.role === "admin" ? "Admin" : "Comum"}
+                          </span>
+                          {u.status === "banned" && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-red-600/20 border border-red-500/50 text-red-400 shrink-0">
+                              <Ban className="w-2.5 h-2.5" />
+                              Bloqueado
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="pt-2 border-t border-gray-900/60 flex items-center justify-end gap-2">
@@ -1884,6 +2042,27 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                           }`}
                         >
                           {u.role === "admin" ? "Tornar Comum" : "Tornar Admin"}
+                        </button>
+                        <button
+                          onClick={() => handleToggleUserStatus(u.id, u.status, u.name)}
+                          className={`px-3 py-2 border text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                            u.status === "banned"
+                              ? "bg-emerald-950/40 border-emerald-800/40 text-emerald-400 hover:bg-emerald-900 hover:text-white"
+                              : "bg-red-950/40 border-red-900/40 text-red-400 hover:bg-red-900 hover:text-white"
+                          }`}
+                          title={u.status === "banned" ? "Desbloquear" : "Bloquear"}
+                        >
+                          {u.status === "banned" ? (
+                            <>
+                              <Unlock className="w-3.5 h-3.5" />
+                              <span>Desbloquear</span>
+                            </>
+                          ) : (
+                            <>
+                              <Ban className="w-3.5 h-3.5" />
+                              <span>Bloquear</span>
+                            </>
+                          )}
                         </button>
                         
                         <button
@@ -1928,7 +2107,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
           </div>
         )}
 
-        {/* VIEW: BROADCAST NOTIFICATIONS */}
+        {/* VIEW: BROADCAST NOTIFICATIONS & MESSAGES */}
         {activeSubTab === "notifications" && (
           <div className="space-y-6">
             {/* Header Banner */}
@@ -1936,16 +2115,16 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
               <div>
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
                   <Bell className="w-5 h-5 text-amber-400 animate-pulse" />
-                  <span>Central de Notificações e Transmissão Geral</span>
+                  <span>Central de Notificações & Transmissão Premium</span>
                 </h3>
                 <p className="text-xs text-gray-400 mt-1">
-                  Envie mensagens, anúncios, avisos de lançamentos e alertas para todos os usuários do PipocaMax em tempo real.
+                  Envie mensagens direcionadas ou avisos em massa para todos os usuários do PipocaMax com pré-visualização ao vivo.
                 </p>
               </div>
 
               <div className="flex items-center gap-3">
                 <div className="bg-black/60 border border-gray-800 px-3.5 py-2 rounded-xl text-center">
-                  <span className="text-[10px] font-bold text-gray-500 uppercase block">Envios Realizados</span>
+                  <span className="text-[10px] font-bold text-gray-500 uppercase block">Notificações Enviadas</span>
                   <span className="text-sm font-black text-amber-400 font-mono">{sentNotifications.length}</span>
                 </div>
                 <div className="bg-black/60 border border-gray-800 px-3.5 py-2 rounded-xl text-center">
@@ -1956,10 +2135,10 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
             </div>
 
             {/* Quick Templates / Presets */}
-            <div className="bg-[#0c0c0c] border border-gray-900/80 p-4 rounded-2xl space-y-2">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block flex items-center gap-1.5">
+            <div className="bg-[#0c0c0c] border border-gray-900/80 p-4 rounded-2xl space-y-2.5">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span>Modelos Prontos para Preenchimento Rápido</span>
+                <span>Modelos Rápido para Disparo Instantâneo</span>
               </span>
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -1970,7 +2149,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                     setNotifType("success");
                     setNotifTarget("all");
                   }}
-                  className="bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                  className="bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 hover:scale-[1.02]"
                 >
                   <span>🎬 Novo Lançamento</span>
                 </button>
@@ -1978,12 +2157,12 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                 <button
                   type="button"
                   onClick={() => {
-                    setNotifTitle("🍿 Fim de Semana no PipocaMax");
+                    setNotifTitle("🍿 Especial Fim de Semana no PipocaMax");
                     setNotifMessage("Que tal maratonar os filmes e séries mais populares da semana? Acesse nossa aba de destaques!");
                     setNotifType("info");
                     setNotifTarget("all");
                   }}
-                  className="bg-sky-950/40 hover:bg-sky-900/60 border border-sky-800/60 text-sky-300 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                  className="bg-sky-950/40 hover:bg-sky-900/60 border border-sky-800/60 text-sky-300 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 hover:scale-[1.02]"
                 >
                   <span>🍿 Especial Fim de Semana</span>
                 </button>
@@ -1996,7 +2175,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                     setNotifType("warning");
                     setNotifTarget("all");
                   }}
-                  className="bg-amber-950/40 hover:bg-amber-900/60 border border-amber-800/60 text-amber-300 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                  className="bg-amber-950/40 hover:bg-amber-900/60 border border-amber-800/60 text-amber-300 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 hover:scale-[1.02]"
                 >
                   <span>⚡ Aviso de Manutenção</span>
                 </button>
@@ -2004,33 +2183,35 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                 <button
                   type="button"
                   onClick={() => {
-                    setNotifTitle("🎉 Novas Funcionalidades Disponíveis!");
+                    setNotifTitle("🚀 Novas Funcionalidades Disponíveis!");
                     setNotifMessage("Atualizamos a plataforma com suporte a Modo Cinema em tela cheia e acompanhamento de episódios no 'Continue Assistindo'!");
                     setNotifType("success");
                     setNotifTarget("all");
                   }}
-                  className="bg-purple-950/40 hover:bg-purple-900/60 border border-purple-800/60 text-purple-300 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                  className="bg-purple-950/40 hover:bg-purple-900/60 border border-purple-800/60 text-purple-300 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 hover:scale-[1.02]"
                 >
                   <span>🚀 Atualização do App</span>
                 </button>
               </div>
             </div>
 
-            {/* Compose Notification Form */}
-            <div className="bg-[#0c0c0c] border border-gray-900 p-6 rounded-3xl shadow-xl space-y-5">
-              <div className="flex items-center justify-between border-b border-gray-900 pb-3">
-                <h4 className="font-extrabold text-white text-base flex items-center gap-2">
-                  <Send className="w-4 h-4 text-brand-primary" />
-                  <span>Escrever Notificação para Transmissão</span>
-                </h4>
-                <span className="text-[10px] text-gray-500 font-mono uppercase">Formulário de Envios</span>
-              </div>
+            {/* Grid 2-Columns: Form Composer (Left) + Live Card Preview (Right) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Form Composer */}
+              <div className="lg:col-span-7 bg-[#0c0c0c] border border-gray-900 p-6 rounded-3xl shadow-xl space-y-5">
+                <div className="flex items-center justify-between border-b border-gray-900 pb-3">
+                  <h4 className="font-extrabold text-white text-base flex items-center gap-2">
+                    <Send className="w-4 h-4 text-brand-primary" />
+                    <span>Criar Mensagem de Notificação</span>
+                  </h4>
+                  <span className="text-[10px] text-amber-400 font-mono uppercase bg-amber-950/60 border border-amber-900/40 px-2 py-0.5 rounded-md">
+                    Compositor
+                  </span>
+                </div>
 
-              <form onSubmit={handleSendNotification} className="space-y-4">
-                {/* Title and Target */}
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                <form onSubmit={handleSendNotification} className="space-y-4">
                   {/* Title */}
-                  <div className="md:col-span-7 space-y-1">
+                  <div className="space-y-1">
                     <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
                       Título do Anúncio / Notificação *
                     </label>
@@ -2041,12 +2222,12 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                       onChange={(e) => setNotifTitle(e.target.value)}
                       maxLength={100}
                       required
-                      className="w-full bg-black border border-gray-900 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-3.5 rounded-xl transition-all"
+                      className="w-full bg-black border border-gray-900 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-3.5 rounded-xl transition-all font-medium"
                     />
                   </div>
 
                   {/* Target Audience */}
-                  <div className="md:col-span-5 space-y-1">
+                  <div className="space-y-1">
                     <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
                       Público Alvo (Destinatários)
                     </label>
@@ -2061,100 +2242,167 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                       <option value="specific">✉️ Usuário Específico (Por E-mail)</option>
                     </select>
                   </div>
-                </div>
 
-                {/* Specific Target Email if selected */}
-                {notifTarget === "specific" && (
-                  <div className="space-y-1 bg-black/50 border border-amber-900/40 p-3 rounded-2xl animate-fadeIn">
-                    <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block">
-                      E-mail do Usuário Específico *
+                  {/* Specific Target Email if selected */}
+                  {notifTarget === "specific" && (
+                    <div className="space-y-1 bg-black/80 border border-amber-900/50 p-3 rounded-2xl animate-fadeIn">
+                      <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block">
+                        E-mail do Usuário Específico *
+                      </label>
+                      <input
+                        type="email"
+                        placeholder="Ex: usuario@email.com"
+                        value={notifTargetEmail}
+                        onChange={(e) => setNotifTargetEmail(e.target.value)}
+                        required
+                        className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all font-mono"
+                      />
+                    </div>
+                  )}
+
+                  {/* Notification Message Content */}
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+                      Mensagem / Conteúdo da Notificação *
                     </label>
-                    <input
-                      type="email"
-                      placeholder="Ex: usuario@email.com"
-                      value={notifTargetEmail}
-                      onChange={(e) => setNotifTargetEmail(e.target.value)}
+                    <textarea
+                      rows={3}
+                      placeholder="Escreva a mensagem clara que aparecerá para o usuário na central de notificações..."
+                      value={notifMessage}
+                      onChange={(e) => setNotifMessage(e.target.value)}
                       required
-                      className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-sm py-2 px-3 rounded-xl transition-all font-mono"
+                      className="w-full bg-black border border-gray-900 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-3.5 rounded-xl transition-all resize-none leading-relaxed"
                     />
                   </div>
-                )}
 
-                {/* Notification Message Content */}
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
-                    Mensagem / Conteúdo do Anúncio *
-                  </label>
-                  <textarea
-                    rows={3}
-                    placeholder="Escreva a mensagem clara e amigável que aparecerá para os usuários na central de notificações..."
-                    value={notifMessage}
-                    onChange={(e) => setNotifMessage(e.target.value)}
-                    required
-                    className="w-full bg-black border border-gray-900 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-3.5 rounded-xl transition-all resize-none"
-                  />
-                </div>
+                  {/* Category Type & Optional Movie Link */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Style Type */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+                        Estilo Visual
+                      </label>
+                      <select
+                        value={notifType}
+                        onChange={(e: any) => setNotifType(e.target.value)}
+                        className="w-full bg-black border border-gray-900 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-3 rounded-xl transition-all cursor-pointer font-medium"
+                      >
+                        <option value="info">ℹ️ Informativo (Azul)</option>
+                        <option value="success">🎉 Novidade / Sucesso (Verde)</option>
+                        <option value="warning">⚠️ Alerta / Aviso (Amarelo)</option>
+                        <option value="alert">🔥 Urgente / Destaque (Vermelho)</option>
+                      </select>
+                    </div>
 
-                {/* Notification Category Type & Optional Movie Link */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Type */}
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
-                      Tipo de Estilo da Notificação
-                    </label>
-                    <select
-                      value={notifType}
-                      onChange={(e: any) => setNotifType(e.target.value)}
-                      className="w-full bg-black border border-gray-900 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-3 rounded-xl transition-all cursor-pointer"
-                    >
-                      <option value="info">ℹ️ Informativo (Azul / Padrão)</option>
-                      <option value="success">🎉 Novidade / Sucesso (Verde)</option>
-                      <option value="warning">⚠️ Alerta / Aviso (Amarelo)</option>
-                      <option value="alert">🔥 Urgente / Destaque (Vermelho)</option>
-                    </select>
+                    {/* Optional Attached Movie */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
+                        Vincular Filme/Série (Opcional)
+                      </label>
+                      <select
+                        value={notifAttachedMovieId}
+                        onChange={(e) => setNotifAttachedMovieId(e.target.value)}
+                        className="w-full bg-black border border-gray-900 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-3 rounded-xl transition-all cursor-pointer font-medium"
+                      >
+                        <option value="">Nenhum título vinculado</option>
+                        {movies.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.type === "serie" ? "📺" : m.type === "anime" ? "🎌" : "🎬"} {m.title} ({m.year})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
-                  {/* Optional Attached Movie */}
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
-                      Vincular a um Filme/Série (Opcional)
-                    </label>
-                    <select
-                      value={notifAttachedMovieId}
-                      onChange={(e) => setNotifAttachedMovieId(e.target.value)}
-                      className="w-full bg-black border border-gray-900 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-3 rounded-xl transition-all cursor-pointer"
+                  {/* Submit Action Button */}
+                  <div className="pt-2 flex items-center justify-end">
+                    <button
+                      type="submit"
+                      disabled={notifSubmitting}
+                      className="w-full sm:w-auto bg-brand-primary hover:bg-brand-secondary disabled:bg-gray-800 text-white font-extrabold text-xs px-6 py-3 rounded-xl transition-all cursor-pointer shadow-lg shadow-red-600/30 hover:scale-[1.01] flex items-center justify-center gap-2"
                     >
-                      <option value="">Nenhum título vinculado</option>
-                      {movies.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.type === "serie" ? "📺" : m.type === "anime" ? "🎌" : "🎬"} {m.title} ({m.year})
-                        </option>
-                      ))}
-                    </select>
+                      {notifSubmitting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin text-white" />
+                          <span>Disparando Notificação...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-4 h-4" />
+                          <span>Disparar Notificação Agora</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Right Column: Live Card Preview */}
+              <div className="lg:col-span-5 space-y-4">
+                <div className="bg-[#0c0c0c] border border-gray-900 p-5 rounded-3xl space-y-3.5 shadow-xl">
+                  <div className="flex items-center justify-between border-b border-gray-900 pb-2.5">
+                    <span className="text-[11px] font-extrabold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Pré-Visualização em Tempo Real
+                    </span>
+                    <span className="text-[10px] text-gray-500 font-mono">Como o usuário verá</span>
+                  </div>
+
+                  <p className="text-[11px] text-gray-400">
+                    Assim é como a notificação irá aparecer na caixa de entrada do usuário:
+                  </p>
+
+                  {/* Live Card Replica */}
+                  <div className={`p-4 rounded-2xl border transition-all shadow-xl bg-black/90 ${
+                    notifType === "success"
+                      ? "border-emerald-800/80 shadow-emerald-950/30"
+                      : notifType === "warning"
+                      ? "border-amber-800/80 shadow-amber-950/30"
+                      : notifType === "alert"
+                      ? "border-red-800/80 shadow-red-950/30"
+                      : "border-sky-800/80 shadow-sky-950/30"
+                  }`}>
+                    <div className="flex items-start gap-3">
+                      <div className={`p-2 rounded-xl border shrink-0 ${
+                        notifType === "success"
+                          ? "bg-emerald-950 text-emerald-400 border-emerald-800"
+                          : notifType === "warning"
+                          ? "bg-amber-950 text-amber-400 border-amber-800"
+                          : notifType === "alert"
+                          ? "bg-red-950 text-red-400 border-red-800"
+                          : "bg-sky-950 text-sky-400 border-sky-800"
+                      }`}>
+                        <Bell className="w-4 h-4" />
+                      </div>
+
+                      <div className="space-y-1.5 flex-1 min-w-0 text-left">
+                        <div className="flex items-center justify-between gap-2">
+                          <h5 className="font-extrabold text-xs text-white leading-tight">
+                            {notifTitle || "Título da Notificação"}
+                          </h5>
+                          <span className="text-[9px] font-bold border px-1.5 py-0.5 rounded uppercase tracking-wider text-amber-400 border-amber-800 bg-amber-950">
+                            {notifTarget === "all" ? "📢 Geral" : notifTarget === "admins" ? "🛡️ Admin" : "👤 Direto"}
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap">
+                          {notifMessage || "O conteúdo da sua mensagem aparecerá aqui exatamente formatado..."}
+                        </p>
+
+                        {notifAttachedMovieId && (
+                          <div className="text-[10px] font-bold text-amber-400 flex items-center gap-1 pt-1">
+                            <span>▶ Assistir ao Título Vinculado</span>
+                          </div>
+                        )}
+
+                        <div className="text-[9px] text-gray-500 pt-1 border-t border-gray-900">
+                          Agora mesmo • Enviado pela Equipe PipocaMax
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
-
-                {/* Submit Action Button */}
-                <div className="pt-2 flex items-center justify-end">
-                  <button
-                    type="submit"
-                    disabled={notifSubmitting}
-                    className="w-full md:w-auto bg-brand-primary hover:bg-brand-secondary disabled:bg-gray-800 text-white font-extrabold text-xs px-6 py-3 rounded-xl transition-all cursor-pointer shadow-lg shadow-red-600/20 hover:scale-101 flex items-center justify-center gap-2"
-                  >
-                    {notifSubmitting ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin text-white" />
-                        <span>Enviando para os Usuários...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Send className="w-4 h-4" />
-                        <span>Disparar Notificação Agora</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </form>
+              </div>
             </div>
 
             {/* Sent Notifications History */}
@@ -2162,7 +2410,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
               <div className="flex items-center justify-between border-b border-gray-900 pb-3">
                 <h4 className="font-extrabold text-white text-base flex items-center gap-2">
                   <Radio className="w-4 h-4 text-emerald-400" />
-                  <span>Histórico de Notificações Enviadas ({sentNotifications.length})</span>
+                  <span>Histórico de Mensagens Enviadas ({sentNotifications.length})</span>
                 </h4>
                 <button
                   type="button"
@@ -2170,7 +2418,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                   className="text-xs text-gray-400 hover:text-white flex items-center gap-1 bg-black border border-gray-800 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Atualizar Lista</span>
+                  <span>Atualizar Histórico</span>
                 </button>
               </div>
 
@@ -2245,42 +2493,57 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
               ) : (
                 <div className="p-8 text-center text-gray-500 text-xs bg-black/40 border border-gray-900 rounded-2xl">
                   <Bell className="w-8 h-8 text-gray-700 mx-auto mb-2" />
-                  Nenhuma notificação foi enviada ainda. Use o formulário acima para disparar seu primeiro aviso para os usuários!
+                  Nenhuma notificação foi enviada ainda. Use o formulário acima para disparar seu primeiro aviso!
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {/* VIEW: REPORTS & DENÚNCIAS */}
+        {/* VIEW: REPORTS & DENÚNCIAS MANAGEMENT */}
         {activeSubTab === "reports" && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#0c0c0c] border border-gray-900 p-5 rounded-2xl">
               <div>
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
                   <Flag className="w-5 h-5 text-amber-400" />
-                  <span>Central de Denúncias e Relatórios de Erro</span>
+                  <span>Central de Atendimento & Denúncias</span>
                 </h3>
                 <p className="text-xs text-gray-400 mt-1">
-                  Gerencie notificações enviadas pelos usuários sobre falhas de player, episódios ou capas.
+                  Gerencie denúncias enviadas pelos usuários, envie respostas diretas e atualize os status de correção.
                 </p>
               </div>
 
-              {/* Status Filter */}
-              <div className="flex items-center gap-2 bg-black border border-gray-800 p-1.5 rounded-xl">
-                {(["todos", "Pendente", "Em Análise", "Resolvido"] as const).map((filterOpt) => (
-                  <button
-                    key={filterOpt}
-                    onClick={() => setReportsFilter(filterOpt)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer capitalize ${
-                      reportsFilter === filterOpt
-                        ? "bg-brand-primary text-white"
-                        : "text-gray-400 hover:text-white"
-                    }`}
-                  >
-                    {filterOpt}
-                  </button>
-                ))}
+              {/* Filters & Search */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+                {/* Search input */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+                  <input
+                    type="text"
+                    placeholder="Buscar por título ou e-mail..."
+                    value={reportsSearchQuery}
+                    onChange={(e) => setReportsSearchQuery(e.target.value)}
+                    className="w-full sm:w-56 bg-black border border-gray-800 text-white text-xs py-2 pl-9 pr-3 rounded-xl focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                {/* Status Filter */}
+                <div className="flex items-center gap-1.5 bg-black border border-gray-800 p-1 rounded-xl">
+                  {(["todos", "Pendente", "Em Análise", "Resolvido"] as const).map((filterOpt) => (
+                    <button
+                      key={filterOpt}
+                      onClick={() => setReportsFilter(filterOpt)}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer capitalize ${
+                        reportsFilter === filterOpt
+                          ? "bg-brand-primary text-white shadow"
+                          : "text-gray-400 hover:text-white"
+                      }`}
+                    >
+                      {filterOpt}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -2293,83 +2556,205 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {reports
                   .filter((r) => reportsFilter === "todos" || r.status === reportsFilter)
-                  .map((report) => (
-                    <div
-                      key={report.id}
-                      className="bg-[#0c0c0c] border border-gray-900 hover:border-gray-800 p-5 rounded-2xl shadow-xl flex flex-col justify-between space-y-4"
-                    >
-                      <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <span className="text-xs font-mono font-bold text-amber-400 block uppercase tracking-wider">
-                              {report.reason}
+                  .filter((r) => {
+                    if (!reportsSearchQuery.trim()) return true;
+                    const q = reportsSearchQuery.toLowerCase();
+                    return (
+                      (r.movieTitle || "").toLowerCase().includes(q) ||
+                      (r.userEmail || "").toLowerCase().includes(q) ||
+                      (r.reason || "").toLowerCase().includes(q) ||
+                      (r.description || "").toLowerCase().includes(q)
+                    );
+                  })
+                  .map((report) => {
+                    const isReplying = replyingReportId === report.id;
+
+                    return (
+                      <div
+                        key={report.id}
+                        className="bg-[#0c0c0c] border border-gray-900 hover:border-gray-800 p-5 rounded-2xl shadow-xl flex flex-col justify-between space-y-4 transition-all"
+                      >
+                        <div className="space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <span className="text-[10px] font-black font-mono text-amber-400 block uppercase tracking-wider">
+                                {report.reason}
+                              </span>
+                              <h4 className="font-extrabold text-white text-base mt-0.5">
+                                {report.movieTitle || "Problema Geral no Site"}
+                              </h4>
+                            </div>
+
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border uppercase tracking-wider shrink-0 ${
+                              report.status === "Resolvido"
+                                ? "bg-emerald-950/60 border-emerald-800 text-emerald-400"
+                                : report.status === "Em Análise"
+                                ? "bg-blue-950/60 border-blue-800 text-blue-400"
+                                : "bg-amber-950/60 border-amber-800 text-amber-400 animate-pulse"
+                            }`}>
+                              {report.status}
                             </span>
-                            <h4 className="font-extrabold text-white text-base mt-0.5">
-                              {report.movieTitle || "Problema Geral no Site"}
-                            </h4>
                           </div>
 
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border uppercase tracking-wider shrink-0 ${
-                            report.status === "Resolvido"
-                              ? "bg-emerald-950/40 border-emerald-800 text-emerald-400"
-                              : report.status === "Em Análise"
-                              ? "bg-blue-950/40 border-blue-800 text-blue-400"
-                              : "bg-amber-950/40 border-amber-800 text-amber-400 animate-pulse"
-                          }`}>
-                            {report.status}
-                          </span>
+                          {/* Description */}
+                          <div className="bg-black/80 border border-gray-900/80 p-3.5 rounded-xl text-xs text-gray-200 leading-relaxed">
+                            <span className="text-[10px] text-gray-500 font-bold uppercase block mb-1">Relato do Usuário:</span>
+                            {report.description}
+                          </div>
+
+                          {/* Existing Admin Reply preview if present */}
+                          {report.adminReply && !isReplying && (
+                            <div className="bg-emerald-950/30 border border-emerald-800/40 p-3 rounded-xl text-xs text-emerald-300 space-y-1">
+                              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" />
+                                Resposta Enviada Anteriormente:
+                              </span>
+                              <p className="italic text-gray-300">"{report.adminReply}"</p>
+                            </div>
+                          )}
+
+                          {/* User Reporter Info */}
+                          <div className="text-[11px] text-gray-400 pt-1 flex flex-wrap items-center justify-between gap-2 border-t border-gray-900">
+                            <div>
+                              Por: <strong className="text-gray-200">{report.userName}</strong> ({report.userEmail})
+                            </div>
+                            <div className="text-gray-500 text-[10px]">
+                              {new Date(report.createdAt).toLocaleDateString("pt-BR")} às {new Date(report.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                            </div>
+                          </div>
                         </div>
 
-                        <div className="bg-black/80 border border-gray-900/80 p-3.5 rounded-xl text-xs text-gray-200 leading-relaxed">
-                          {report.description}
-                        </div>
+                        {/* Reply Drawer Inline inside card */}
+                        {isReplying ? (
+                          <div className="bg-black/90 border border-amber-900/50 p-4 rounded-2xl space-y-3 animate-fadeIn">
+                            <div className="flex items-center justify-between border-b border-gray-900 pb-2">
+                              <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                                <MessageSquare className="w-3.5 h-3.5" />
+                                Responder a {report.userName}
+                              </span>
+                              <button
+                                onClick={() => setReplyingReportId(null)}
+                                className="text-gray-500 hover:text-white text-xs"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
 
-                        <div className="text-[11px] text-gray-400 pt-1 flex flex-wrap items-center justify-between gap-2 border-t border-gray-900">
-                          <div>
-                            Enviado por: <strong className="text-gray-200">{report.userName}</strong> ({report.userEmail})
+                            {/* Quick Presets */}
+                            <div className="space-y-1">
+                              <span className="text-[10px] font-bold text-gray-500 uppercase block">Respostas Rápidas:</span>
+                              <div className="flex flex-wrap gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setReplyText("✅ Corrigido! Link de reprodução e vídeos atualizados em alta qualidade. Bom filme!");
+                                    setReplyStatus("Resolvido");
+                                  }}
+                                  className="text-[10px] bg-emerald-950/60 hover:bg-emerald-900 border border-emerald-800 text-emerald-300 px-2 py-1 rounded-lg cursor-pointer"
+                                >
+                                  ✅ Vídeo Corrigido
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setReplyText("🔍 Em análise! Nossa equipe identificou o problema e está re-processando os vídeos.");
+                                    setReplyStatus("Em Análise");
+                                  }}
+                                  className="text-[10px] bg-blue-950/60 hover:bg-blue-900 border border-blue-800 text-blue-300 px-2 py-1 rounded-lg cursor-pointer"
+                                >
+                                  🔍 Em Análise
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setReplyText("ℹ️ Título sincronizado e testado! Limpe o cache do navegador e tente novamente.");
+                                    setReplyStatus("Resolvido");
+                                  }}
+                                  className="text-[10px] bg-amber-950/60 hover:bg-amber-900 border border-amber-800 text-amber-300 px-2 py-1 rounded-lg cursor-pointer"
+                                >
+                                  ℹ️ Testado & OK
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Reply Textarea */}
+                            <textarea
+                              rows={3}
+                              value={replyText}
+                              onChange={(e) => setReplyText(e.target.value)}
+                              placeholder="Digite sua resposta detalhada..."
+                              className="w-full bg-black border border-gray-800 focus:border-amber-500 text-white text-xs p-2.5 rounded-xl resize-none"
+                            />
+
+                            {/* Status Selector */}
+                            <div className="flex items-center justify-between gap-2">
+                              <select
+                                value={replyStatus}
+                                onChange={(e) => setReplyStatus(e.target.value)}
+                                className="bg-black border border-gray-800 text-white text-xs py-1.5 px-2 rounded-xl"
+                              >
+                                <option value="Resolvido">Marcar como Resolvido</option>
+                                <option value="Em Análise">Marcar como Em Análise</option>
+                                <option value="Pendente">Manter Pendente</option>
+                              </select>
+
+                              <button
+                                type="button"
+                                disabled={replySubmitting}
+                                onClick={() => handleSendReportReply(report.id)}
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                              >
+                                {replySubmitting ? "Enviando..." : (
+                                  <>
+                                    <Send className="w-3.5 h-3.5" />
+                                    <span>Enviar e Notificar</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
                           </div>
-                          <div className="text-gray-500 text-[10px]">
-                            {new Date(report.createdAt).toLocaleDateString("pt-BR")} às {new Date(report.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                        ) : (
+                          /* Standard Action Controls */
+                          <div className="flex items-center gap-2 pt-2 border-t border-gray-900">
+                            <button
+                              onClick={() => {
+                                setReplyingReportId(report.id);
+                                setReplyText(report.adminReply || "✅ Problema corrigido com sucesso! Obrigado pelo aviso.");
+                                setReplyStatus("Resolvido");
+                              }}
+                              className="flex-1 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-400 text-xs font-bold py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                              <span>{report.adminReply ? "Editar Resposta" : "Responder Usuário"}</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleUpdateReportStatus(report.id, "Resolvido")}
+                              disabled={report.status === "Resolvido"}
+                              className="bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-400 disabled:opacity-40 text-xs font-bold py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Resolvido</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleDeleteReport(report.id)}
+                              className="bg-red-950/20 hover:bg-red-900/40 border border-red-900/40 text-red-400 p-2 rounded-xl transition-all cursor-pointer"
+                              title="Excluir Denúncia"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
-                        </div>
+                        )}
                       </div>
-
-                      {/* Action Controls */}
-                      <div className="flex items-center gap-2 pt-2 border-t border-gray-900">
-                        <button
-                          onClick={() => handleUpdateReportStatus(report.id, "Resolvido")}
-                          disabled={report.status === "Resolvido"}
-                          className="flex-1 bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-400 disabled:opacity-40 text-xs font-bold py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Marcar Resolvido</span>
-                        </button>
-
-                        <button
-                          onClick={() => handleUpdateReportStatus(report.id, "Em Análise")}
-                          disabled={report.status === "Em Análise"}
-                          className="flex-1 bg-blue-950/40 hover:bg-blue-900/60 border border-blue-800/60 text-blue-400 disabled:opacity-40 text-xs font-bold py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
-                        >
-                          <Clock className="w-3.5 h-3.5" />
-                          <span>Em Análise</span>
-                        </button>
-
-                        <button
-                          onClick={() => handleDeleteReport(report.id)}
-                          className="bg-red-950/20 hover:bg-red-900/40 border border-red-900/40 text-red-400 p-2 rounded-xl transition-all cursor-pointer"
-                          title="Excluir Denúncia"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
               </div>
             ) : (
               <div className="p-16 text-center bg-[#0c0c0c] border border-gray-900 rounded-3xl space-y-3">
                 <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />
                 <h4 className="font-bold text-white text-base">Nenhuma denúncia encontrada</h4>
-                <p className="text-xs text-gray-400">Não há relatórios de erro pendentes nesta categoria.</p>
+                <p className="text-xs text-gray-400">Não há relatórios de erro pendentes nesta busca ou filtro.</p>
               </div>
             )}
           </div>

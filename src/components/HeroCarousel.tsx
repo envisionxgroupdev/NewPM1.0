@@ -9,6 +9,7 @@ interface HeroCarouselProps {
   onMovieClick: (movie: Movie) => void;
   favorites: string[];
   onToggleFavorite: (movie: Movie) => void;
+  currentUser?: any;
 }
 
 export default function HeroCarousel({
@@ -16,6 +17,7 @@ export default function HeroCarousel({
   onMovieClick,
   favorites,
   onToggleFavorite,
+  currentUser,
 }: HeroCarouselProps) {
   const featuredMovies = movies.filter((m) => m.featured) || movies;
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -143,18 +145,20 @@ export default function HeroCarousel({
                 <Info className="w-4.5 h-4.5" />
                 <span>Mais Detalhes</span>
               </button>
-              <button
-                onClick={() => onToggleFavorite(currentMovie)}
-                className={`p-3 rounded-full border cursor-pointer hover:scale-103 active:scale-97 transition-all ${
-                  isFavorite
-                    ? "bg-brand-primary/10 border-brand-primary text-brand-primary"
-                    : "bg-gray-950/85 border-gray-800 text-white hover:border-gray-500"
-                }`}
-                title={isFavorite ? "Remover da minha lista" : "Adicionar à minha lista"}
-                id={`hero-btn-fav-${currentMovie.id}`}
-              >
-                {isFavorite ? <BookmarkCheck className="w-5 h-5" /> : <Bookmark className="w-5 h-5" />}
-              </button>
+              {currentUser && (
+                <button
+                  onClick={() => onToggleFavorite(currentMovie)}
+                  className={`p-3 rounded-full border cursor-pointer hover:scale-103 active:scale-97 transition-all ${
+                    isFavorite
+                      ? "bg-brand-primary/10 border-brand-primary text-brand-primary"
+                      : "bg-gray-950/85 border-gray-800 text-white hover:border-gray-500"
+                  }`}
+                  title={isFavorite ? "Remover da minha lista" : "Adicionar à minha lista"}
+                  id={`hero-btn-fav-${currentMovie.id}`}
+                >
+                  {isFavorite ? <BookmarkCheck className="w-5 h-5" /> : <Bookmark className="w-5 h-5" />}
+                </button>
+              )}
             </div>
           </motion.div>
         </AnimatePresence>

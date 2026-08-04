@@ -5,12 +5,13 @@ import { saveContinueWatching, getContinueWatchingList } from "../utils/continue
 import LazyImage from "./LazyImage";
 
 // Helper to get beautiful, themed Netflix-style episode metadata based on genre and index
-const getEpisodeDetails = (type: "serie" | "anime" | "filme", genres: string[], season: number, epNum: number) => {
+const getEpisodeDetails = (type: "serie" | "anime" | "filme", genres: string[] = [], season: number, epNum: number) => {
   const duration = type === "anime" ? "24 min" : "45 min";
   let title = `Episódio ${epNum}`;
   let overview = `A história se aprofunda no capítulo ${epNum} da ${season}ª temporada. Consequências inesperadas surgem e os personagens enfrentam desafios decisivos.`;
   
-  const isSciFi = genres.some(g => ["Ficção Científica", "Ficção científica", "Aventura", "Ação"].includes(g));
+  const safeGenres = genres || [];
+  const isSciFi = safeGenres.some(g => ["Ficção Científica", "Ficção científica", "Aventura", "Ação"].includes(g));
   const isAnime = type === "anime";
   
   if (isAnime) {
@@ -75,6 +76,8 @@ interface MovieModalProps {
   initialSeason?: number;
   initialEpisode?: number;
   initialCinemaMode?: boolean;
+  currentUser?: any;
+  onOpenAuth?: () => void;
 }
 
 const DEFAULT_REVIEWS: Record<string, Omit<Review, "movieId">[]> = {
@@ -105,6 +108,8 @@ export default function MovieModal({
   initialSeason,
   initialEpisode,
   initialCinemaMode,
+  currentUser,
+  onOpenAuth,
 }: MovieModalProps) {
   // playerType can be: "none" (cover), "trailer" (YouTube), "superflix" (Superflix API Embed), or "warez" (WarezCDN)
   const [playerType, setPlayerType] = useState<"none" | "trailer" | "superflix" | "warez">("none");
@@ -112,7 +117,13 @@ export default function MovieModal({
   const [reviews, setReviews] = useState<Review[]>([]);
   const [newComment, setNewComment] = useState("");
   const [newRating, setNewRating] = useState(5);
-  const [authorName, setAuthorName] = useState("");
+  const [authorName, setAuthorName] = useState(currentUser?.name || "");
+
+  useEffect(() => {
+    if (currentUser?.name) {
+      setAuthorName(currentUser.name);
+    }
+  }, [currentUser]);
 
   // Series/Anime Episode and Season selectors
   const [currentSeason, setCurrentSeason] = useState(1);
@@ -124,7 +135,8 @@ export default function MovieModal({
   const [hasReachedThreshold, setHasReachedThreshold] = useState(false);
 
   // Parse maximum seasons from the duration string (e.g. "5 Temps")
-  const parseSeasonsCount = (durationStr: string): number => {
+  const parseSeasonsCount = (durationStr?: string): number => {
+    if (!durationStr) return 1;
     const match = durationStr.match(/(\d+)\s*Temp/i);
     if (match) {
       return parseInt(match[1], 10);
@@ -239,9 +251,13 @@ export default function MovieModal({
 
   const handleSubmitReview = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!currentUser) {
+      if (onOpenAuth) onOpenAuth();
+      return;
+    }
     if (!newComment.trim()) return;
 
-    const name = authorName.trim() || "Espectador Anônimo";
+    const name = (authorName.trim() || currentUser?.name || "Usuário").trim();
     const review: Review = {
       id: `rev_user_${Date.now()}`,
       movieId: movie.id,
@@ -255,7 +271,7 @@ export default function MovieModal({
     setReviews(updated);
     localStorage.setItem(`reviews_${movie.id}`, JSON.stringify(updated));
     setNewComment("");
-    setAuthorName("");
+    setAuthorName(currentUser?.name || "");
     setNewRating(5);
   };
 
@@ -265,12 +281,35 @@ export default function MovieModal({
     localStorage.setItem(`reviews_${movie.id}`, JSON.stringify(updated));
   };
 
-  const similarMovies = allMovies
-    .filter((m) => m.id !== movie.id && m.type === movie.type && m.genres.some((g) => movie.genres.includes(g)))
+  const similarMovies = (allMovies || [])
+    .filter((m) => m.id !== movie.id && m.type === movie.type && (m.genres || []).some((g) => (movie.genres || []).includes(g)))
     .slice(0, 4);
+
+  // JSON-LD Structured Data for active movie/series
+  const jsonLdData = {
+    "@context": "https://schema.org",
+    "@type": movie.type === "serie" || movie.type === "anime" ? "TVSeries" : "Movie",
+    "name": movie.title,
+    "alternateName": movie.originalTitle || undefined,
+    "description": movie.synopsis || "Assista online em HD no PipocaMax.",
+    "image": movie.backdropUrl || movie.posterUrl,
+    "datePublished": movie.year ? `${movie.year}-01-01` : undefined,
+    "genre": Array.isArray(movie.genres) ? movie.genres : movie.genres ? [movie.genres] : undefined,
+    "director": movie.director ? { "@type": "Person", "name": movie.director } : undefined,
+    "aggregateRating": movie.rating ? {
+      "@type": "AggregateRating",
+      "ratingValue": String(movie.rating),
+      "bestRating": "10",
+      "ratingCount": "120"
+    } : undefined
+  };
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto overflow-x-hidden bg-black/95 backdrop-blur-md flex justify-center items-start sm:items-center p-0 sm:p-4 md:p-6 animate-fade-in" id={`movie-modal-overlay-${movie.id}`}>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLdData) }}
+      />
       
       {/* Fullscreen Cinema Mode View Overlay */}
       {isCinemaMode && (
@@ -470,7 +509,7 @@ export default function MovieModal({
                       }`}>
                         {movie.type}
                       </span>
-                      {movie.genres.map((g) => (
+                      {(movie.genres || []).map((g) => (
                         <span key={g} className="text-[10px] bg-white/10 text-gray-300 px-2 py-0.5 rounded-full font-medium">
                           {g}
                         </span>
@@ -488,11 +527,11 @@ export default function MovieModal({
                     )}
 
                     <p className="font-sans text-xs text-gray-300 font-medium mb-4 flex flex-wrap items-center gap-2 drop-shadow-sm">
-                      <span className="text-amber-500 font-bold flex items-center gap-0.5">⭐ {movie.rating.toFixed(1)} / 10</span>
+                      <span className="text-amber-500 font-bold flex items-center gap-0.5">⭐ {(movie.rating ?? 8.5).toFixed(1)} / 10</span>
                       <span className="text-gray-600">•</span>
-                      <span className="flex items-center gap-1 text-gray-400"><Calendar className="w-3 h-3" /> {movie.year}</span>
+                      <span className="flex items-center gap-1 text-gray-400"><Calendar className="w-3 h-3" /> {movie.year || 2026}</span>
                       <span className="text-gray-600">•</span>
-                      <span className="flex items-center gap-1 text-gray-400"><Clock className="w-3 h-3" /> {movie.duration}</span>
+                      <span className="flex items-center gap-1 text-gray-400"><Clock className="w-3 h-3" /> {movie.duration || "N/A"}</span>
                     </p>
                     
                     {/* Primary Streaming Action Row */}
@@ -549,27 +588,29 @@ export default function MovieModal({
                         <span>Trailer</span>
                       </button>
 
-                      <button
-                        onClick={() => onToggleFavorite(movie)}
-                        className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 font-semibold px-3 sm:px-4 py-2.5 rounded-full border cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm min-w-[110px] ${
-                          isFavorite
-                            ? "bg-red-600/15 border-red-600 text-red-500"
-                            : "bg-black/80 border-gray-800 text-white hover:border-gray-600"
-                        }`}
-                        id="modal-toggle-list"
-                      >
-                        {isFavorite ? (
-                          <>
-                            <BookmarkCheck className="w-4 h-4 shrink-0" />
-                            <span>Na Lista</span>
-                          </>
-                        ) : (
-                          <>
-                            <Bookmark className="w-4 h-4 shrink-0" />
-                            <span>Salvar Lista</span>
-                          </>
-                        )}
-                      </button>
+                      {currentUser && (
+                        <button
+                          onClick={() => onToggleFavorite(movie)}
+                          className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 font-semibold px-3 sm:px-4 py-2.5 rounded-full border cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm min-w-[110px] ${
+                            isFavorite
+                              ? "bg-red-600/15 border-red-600 text-red-500"
+                              : "bg-black/80 border-gray-800 text-white hover:border-gray-600"
+                          }`}
+                          id="modal-toggle-list"
+                        >
+                          {isFavorite ? (
+                            <>
+                              <BookmarkCheck className="w-4 h-4 shrink-0" />
+                              <span>Na Lista</span>
+                            </>
+                          ) : (
+                            <>
+                              <Bookmark className="w-4 h-4 shrink-0" />
+                              <span>Salvar Lista</span>
+                            </>
+                          )}
+                        </button>
+                      )}
 
                       {onOpenReport && (
                         <button
@@ -843,63 +884,85 @@ export default function MovieModal({
                 </h3>
 
                 {/* Create a beautiful review form */}
-                <form onSubmit={handleSubmitReview} className="bg-[#0b0b0b] p-5 rounded-2xl border border-gray-900/80 space-y-4 shadow-xl" id="review-form">
-                  <span className="text-xs font-bold text-gray-400 uppercase tracking-widest block">Sua opinião importa</span>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">Nome do Crítico</label>
-                      <input
-                        type="text"
-                        placeholder="Seu nome (opcional)"
-                        value={authorName}
-                        onChange={(e) => setAuthorName(e.target.value)}
-                        className="bg-[#050505] border border-gray-900 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-red-600 transition-colors w-full"
-                        id="review-author"
-                      />
+                {!currentUser ? (
+                  <div className="bg-[#0b0b0b] p-6 rounded-2xl border border-gray-900/80 text-center space-y-3 shadow-xl">
+                    <div className="w-12 h-12 rounded-full bg-red-600/10 border border-red-600/30 text-red-500 flex items-center justify-center mx-auto">
+                      <User className="w-6 h-6" />
                     </div>
-                    
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">Sua classificação</label>
-                      <div className="flex items-center h-[42px] gap-1.5">
-                        {[1, 2, 3, 4, 5].map((star) => (
-                          <button
-                            key={star}
-                            type="button"
-                            onClick={() => setNewRating(star)}
-                            className="p-1 cursor-pointer hover:scale-110 transition-all"
-                            id={`star-btn-${star}`}
-                          >
-                            <Star
-                              className={`w-5 h-5 ${
-                                newRating >= star ? "fill-amber-400 text-amber-400" : "text-gray-700"
-                              }`}
-                            />
-                          </button>
-                        ))}
-                      </div>
+                    <div>
+                      <h4 className="font-bold text-sm text-white">Faça login para avaliar ou comentar</h4>
+                      <p className="text-xs text-gray-400 mt-1 max-w-md mx-auto leading-relaxed">
+                        Apenas usuários cadastrados no PipocaMax podem adicionar filmes e séries à sua lista e compartilhar suas avaliações.
+                      </p>
                     </div>
-                  </div>
-
-                  <div className="relative">
-                    <textarea
-                      placeholder="O que você achou deste título? Escreva sua opinião honesta..."
-                      value={newComment}
-                      onChange={(e) => setNewComment(e.target.value)}
-                      rows={3}
-                      className="bg-[#050505] border border-gray-900 rounded-xl p-4 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-red-600 transition-colors w-full pr-14 leading-relaxed"
-                      id="review-comment"
-                      required
-                    />
                     <button
-                      type="submit"
-                      className="absolute right-3 bottom-3 bg-red-600 hover:bg-red-700 text-white p-3 rounded-lg cursor-pointer transition-all shadow-md shadow-red-600/10 hover:scale-105 active:scale-95"
-                      id="review-submit-btn"
+                      type="button"
+                      onClick={() => onOpenAuth?.()}
+                      className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-6 py-2.5 rounded-full transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-lg shadow-red-600/20 border border-red-500/30"
+                      id="login-to-comment-btn"
                     >
-                      <Send className="w-4 h-4" />
+                      Entrar ou Criar Conta
                     </button>
                   </div>
-                </form>
+                ) : (
+                  <form onSubmit={handleSubmitReview} className="bg-[#0b0b0b] p-5 rounded-2xl border border-gray-900/80 space-y-4 shadow-xl" id="review-form">
+                    <span className="text-xs font-bold text-gray-400 uppercase tracking-widest block">Sua opinião importa</span>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">Nome do Crítico</label>
+                        <input
+                          type="text"
+                          placeholder="Seu nome"
+                          value={authorName}
+                          onChange={(e) => setAuthorName(e.target.value)}
+                          className="bg-[#050505] border border-gray-900 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-red-600 transition-colors w-full"
+                          id="review-author"
+                        />
+                      </div>
+                      
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">Sua classificação</label>
+                        <div className="flex items-center h-[42px] gap-1.5">
+                          {[1, 2, 3, 4, 5].map((star) => (
+                            <button
+                              key={star}
+                              type="button"
+                              onClick={() => setNewRating(star)}
+                              className="p-1 cursor-pointer hover:scale-110 transition-all"
+                              id={`star-btn-${star}`}
+                            >
+                              <Star
+                                className={`w-5 h-5 ${
+                                  newRating >= star ? "fill-amber-400 text-amber-400" : "text-gray-700"
+                                }`}
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="relative">
+                      <textarea
+                        placeholder="O que você achou deste título? Escreva sua opinião honesta..."
+                        value={newComment}
+                        onChange={(e) => setNewComment(e.target.value)}
+                        rows={3}
+                        className="bg-[#050505] border border-gray-900 rounded-xl p-4 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-red-600 transition-colors w-full pr-14 leading-relaxed"
+                        id="review-comment"
+                        required
+                      />
+                      <button
+                        type="submit"
+                        className="absolute right-3 bottom-3 bg-red-600 hover:bg-red-700 text-white p-3 rounded-lg cursor-pointer transition-all shadow-md shadow-red-600/10 hover:scale-105 active:scale-95"
+                        id="review-submit-btn"
+                      >
+                        <Send className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </form>
+                )}
 
                 {/* Reviews List */}
                 <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 scrollbar-thin">
@@ -957,23 +1020,23 @@ export default function MovieModal({
                 <div className="space-y-3.5 text-xs">
                   <div className="flex items-start justify-between py-1 border-b border-gray-950">
                     <span className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">Diretor</span>
-                    <span className="text-gray-200 font-medium text-right ml-4">{movie.director}</span>
+                    <span className="text-gray-200 font-medium text-right ml-4">{movie.director || "PipocaMax"}</span>
                   </div>
 
                   <div className="flex items-start justify-between py-1 border-b border-gray-950">
                     <span className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">Duração</span>
-                    <span className="text-gray-200 font-medium text-right ml-4">{movie.duration}</span>
+                    <span className="text-gray-200 font-medium text-right ml-4">{movie.duration || "N/A"}</span>
                   </div>
 
                   <div className="flex items-start justify-between py-1 border-b border-gray-950">
                     <span className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">Ano Lançamento</span>
-                    <span className="text-gray-200 font-medium text-right ml-4">{movie.year}</span>
+                    <span className="text-gray-200 font-medium text-right ml-4">{movie.year || 2026}</span>
                   </div>
 
                   <div className="flex items-start justify-between py-1 border-b border-gray-950">
                     <span className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">Avaliação TMDB</span>
                     <span className="text-amber-500 font-mono font-black flex items-center gap-0.5">
-                      ⭐ {movie.rating.toFixed(1)} / 10
+                      ⭐ {(movie.rating ?? 8.5).toFixed(1)} / 10
                     </span>
                   </div>
                 </div>
@@ -986,7 +1049,7 @@ export default function MovieModal({
                   <span>Elenco Principal</span>
                 </h4>
                 <div className="flex flex-wrap gap-1.5">
-                  {movie.cast.map((actor) => (
+                  {(movie.cast || []).map((actor) => (
                     <span
                       key={actor}
                       className="text-[11px] bg-black border border-gray-900 text-gray-300 px-3 py-1.5 rounded-full font-sans font-medium transition-colors hover:border-gray-700"
@@ -994,6 +1057,9 @@ export default function MovieModal({
                       {actor}
                     </span>
                   ))}
+                  {(!movie.cast || movie.cast.length === 0) && (
+                    <span className="text-xs text-gray-500 italic">Elenco não especificado</span>
+                  )}
                 </div>
               </div>
 

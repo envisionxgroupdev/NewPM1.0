@@ -44,9 +44,22 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalP
         body: JSON.stringify(body)
       });
 
-      const data = await response.json();
+      let data: any = {};
+      try {
+        data = await response.json();
+      } catch (e) {
+        data = {};
+      }
 
-      if (!response.ok) {
+      if (!response.ok || data.banned || response.status === 403) {
+        if (
+          response.status === 403 ||
+          data.banned ||
+          data.error === "Conta Bloqueada" ||
+          (data.error && String(data.error).toLowerCase().includes("bloquead"))
+        ) {
+          throw new Error("Conta Bloqueada: Seu acesso foi bloqueado ou banido por um administrador do sistema PipocaMax.");
+        }
         const errMsg = data.error || "Algo deu errado ao autenticar.";
         const details = data.details ? ` (${data.details})` : "";
         throw new Error(`${errMsg}${details}`);
@@ -76,7 +89,17 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalP
         }
       }
     } catch (err: any) {
-      setError(err.message || "Erro de conexão com o servidor.");
+      let rawMsg = err?.message || "";
+      if (
+        !rawMsg ||
+        rawMsg.toLowerCase().includes("pattern") ||
+        rawMsg.toLowerCase().includes("failed to execute") ||
+        rawMsg.toLowerCase().includes("domexception") ||
+        rawMsg.toLowerCase().includes("unexpected token")
+      ) {
+        rawMsg = "Erro de autenticação. Por favor, verifique se suas credenciais estão corretas ou se a conta está ativa.";
+      }
+      setError(rawMsg);
     } finally {
       setLoading(false);
     }
@@ -133,12 +156,27 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalP
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="mb-4 bg-red-950/30 border border-red-900/40 text-red-400 p-3 rounded-xl text-xs flex items-start gap-2.5"
+              className={`mb-4 p-3.5 rounded-xl text-xs flex items-start gap-3 border ${
+                error.toLowerCase().includes("bloquead")
+                  ? "bg-red-950/60 border-red-700/80 text-red-300 shadow-lg shadow-red-950/40"
+                  : "bg-red-950/30 border-red-900/40 text-red-400"
+              }`}
             >
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-semibold">Erro de autenticação</p>
-                <p className="opacity-90 mt-0.5">{error}</p>
+              <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-400" />
+              <div className="space-y-1">
+                <p className="font-bold text-white text-sm">
+                  {error.toLowerCase().includes("bloquead") || error.toLowerCase().includes("banid")
+                    ? "Conta Bloqueada no Sistema"
+                    : "Erro de Autenticação"}
+                </p>
+                <p className="text-xs text-red-300/90 leading-relaxed">
+                  {error.replace(/^Conta Bloqueada:\s*/i, "").replace(/\(Seu acesso foi bloqueado[^\)]*\)/i, "").trim()}
+                </p>
+                {(error.toLowerCase().includes("bloquead") || error.toLowerCase().includes("banid")) && (
+                  <p className="text-[11px] text-gray-400 pt-1 border-t border-red-900/40 mt-1.5">
+                    Se você acredita que isso foi um engano, entre em contato com o suporte da plataforma PipocaMax.
+                  </p>
+                )}
               </div>
             </motion.div>
           )}
@@ -267,13 +305,6 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalP
                 className="text-[11px] font-bold text-gray-300 hover:text-white bg-gray-900 hover:bg-gray-800 border border-gray-800 px-3 py-1.5 rounded-lg transition-all cursor-pointer"
               >
                 🔑 Admin PipocaMax
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickLogin("higorjuliatti159@gmail.com", "admin")}
-                className="text-[11px] font-bold text-gray-300 hover:text-white bg-gray-900 hover:bg-gray-800 border border-gray-800 px-3 py-1.5 rounded-lg transition-all cursor-pointer"
-              >
-                👤 Higor Juliatti
               </button>
             </div>
           </div>
