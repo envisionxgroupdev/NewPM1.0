@@ -1084,6 +1084,24 @@ async function startServer() {
           }
         }
 
+        // Secondary fallback: fetch videos without language filter if pt-BR had no YouTube trailer
+        if ((!trailerVideoId || trailerVideoId === "dQw4w9WgXcQ") && tmdbId && apiKey) {
+          try {
+            const extraVUrl = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}/videos?api_key=${apiKey}`;
+            const extraVRes = await fetch(extraVUrl);
+            if (extraVRes.ok) {
+              const extraVData = await extraVRes.json();
+              if (extraVData.results && extraVData.results.length > 0) {
+                const tr = extraVData.results.find((v: any) => v.type === "Trailer" && v.site === "YouTube") ||
+                           extraVData.results.find((v: any) => v.site === "YouTube");
+                if (tr) trailerVideoId = tr.key;
+              }
+            }
+          } catch (vErr) {
+            console.warn("Aviso na busca secundaria de trailer:", vErr);
+          }
+        }
+
         let duration = "120 min";
         if (tmdbType === "movie") {
           duration = data.runtime ? `${data.runtime} min` : "120 min";
@@ -1292,6 +1310,24 @@ async function startServer() {
         }
       }
 
+      // Secondary fallback for details: fetch videos without language filter if pt-BR had no YouTube trailer
+      if ((!trailerVideoId || trailerVideoId === "dQw4w9WgXcQ") && id && apiKey) {
+        try {
+          const extraVUrl = `https://api.themoviedb.org/3/${tmdbType}/${id}/videos?api_key=${apiKey}`;
+          const extraVRes = await fetch(extraVUrl);
+          if (extraVRes.ok) {
+            const extraVData = await extraVRes.json();
+            if (extraVData.results && extraVData.results.length > 0) {
+              const tr = extraVData.results.find((v: any) => v.type === "Trailer" && v.site === "YouTube") ||
+                         extraVData.results.find((v: any) => v.site === "YouTube");
+              if (tr) trailerVideoId = tr.key;
+            }
+          }
+        } catch (vErr) {
+          console.warn("Aviso na busca secundaria de trailer em details:", vErr);
+        }
+      }
+
       // Duration mapping
       let duration = "120 min";
       if (tmdbType === "movie") {
@@ -1331,6 +1367,82 @@ async function startServer() {
     } catch (err: any) {
       console.error("Erro ao obter detalhes no TMDB:", err);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // API route to resolve trailer YouTube video ID for any title or TMDB ID
+  app.get("/api/tmdb/trailer", async (req, res) => {
+    try {
+      let tmdbId = req.query.tmdbId as string;
+      const title = req.query.title as string;
+      const type = (req.query.type as string) || "filme";
+      const year = req.query.year as string;
+
+      let apiKey = req.headers["x-tmdb-api-key"] as string || process.env.TMDB_API_KEY;
+      if (!apiKey) {
+        apiKey = await getTmdbApiKeyFromDb();
+      }
+
+      const tmdbType = type === "serie" || type === "tv" || type === "anime" ? "tv" : "movie";
+
+      // If tmdbId is missing but title is provided, search TMDB
+      if ((!tmdbId || tmdbId === "undefined" || tmdbId === "null") && title && apiKey) {
+        try {
+          const searchUrl = `https://api.themoviedb.org/3/search/${tmdbType}?api_key=${apiKey}&query=${encodeURIComponent(title)}&language=pt-BR&include_adult=false${year ? `&year=${year}` : ""}`;
+          const sRes = await fetch(searchUrl);
+          if (sRes.ok) {
+            const sData = await sRes.json();
+            if (sData.results && sData.results.length > 0) {
+              tmdbId = String(sData.results[0].id);
+            }
+          }
+        } catch (sErr) {
+          console.warn("Erro ao buscar tmdbId para trailer:", sErr);
+        }
+      }
+
+      let trailerVideoId: string | null = null;
+
+      if (tmdbId && tmdbId !== "undefined" && tmdbId !== "null" && apiKey) {
+        // Step 1: Try fetching videos in pt-BR
+        try {
+          const vUrlPt = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}/videos?api_key=${apiKey}&language=pt-BR`;
+          const vResPt = await fetch(vUrlPt);
+          if (vResPt.ok) {
+            const vDataPt = await vResPt.json();
+            if (vDataPt.results && vDataPt.results.length > 0) {
+              const tr = vDataPt.results.find((v: any) => v.type === "Trailer" && v.site === "YouTube") ||
+                         vDataPt.results.find((v: any) => v.site === "YouTube");
+              if (tr) trailerVideoId = tr.key;
+            }
+          }
+        } catch (e) {}
+
+        // Step 2: Fallback to videos without language filter (English/global) if pt-BR had none
+        if (!trailerVideoId) {
+          try {
+            const vUrlEn = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}/videos?api_key=${apiKey}`;
+            const vResEn = await fetch(vUrlEn);
+            if (vResEn.ok) {
+              const vDataEn = await vResEn.json();
+              if (vDataEn.results && vDataEn.results.length > 0) {
+                const tr = vDataEn.results.find((v: any) => v.type === "Trailer" && v.site === "YouTube") ||
+                           vDataEn.results.find((v: any) => v.site === "YouTube");
+                if (tr) trailerVideoId = tr.key;
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      if (trailerVideoId) {
+        return res.json({ success: true, trailerVideoId });
+      } else {
+        return res.status(404).json({ success: false, error: "Nenhum trailer encontrado no TMDB." });
+      }
+    } catch (err: any) {
+      console.error("Erro na rota /api/tmdb/trailer:", err);
+      res.status(500).json({ success: false, error: err.message });
     }
   });
 

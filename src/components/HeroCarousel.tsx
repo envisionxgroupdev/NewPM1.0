@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Movie } from "../types";
-import { Play, Info, Bookmark, BookmarkCheck, ChevronLeft, ChevronRight } from "lucide-react";
+import { Play, Info, Bookmark, BookmarkCheck, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import LazyImage from "./LazyImage";
 
@@ -17,6 +17,7 @@ export default function HeroCarousel({
   onMovieClick,
   favorites,
   onToggleFavorite,
+  currentUser,
 }: HeroCarouselProps) {
   const featured = (movies || []).filter((m) => m && m.featured);
   const featuredMovies = featured.length > 0 ? featured : (movies || []).slice(0, 6);
@@ -245,6 +246,18 @@ export default function HeroCarousel({
               <Info className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-gray-300 shrink-0" />
               <span>Mais Detalhes</span>
             </button>
+
+            {currentUser?.role === "admin" && (
+              <button
+                onClick={() => onMovieClick(currentMovie)}
+                className="flex items-center gap-1.5 sm:gap-2 bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-black font-extrabold px-3.5 sm:px-5 py-2 sm:py-3 rounded-full border border-amber-500/40 backdrop-blur-md cursor-pointer hover:scale-103 active:scale-97 transition-all text-xs sm:text-sm shadow-lg shadow-amber-500/20"
+                id={`hero-btn-edit-${currentMovie.id}`}
+                title="Editar Título (Admin)"
+              >
+                <Pencil className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Editar</span>
+              </button>
+            )}
 
             <button
               onClick={() => onToggleFavorite(currentMovie)}

@@ -1,6 +1,6 @@
 import React from "react";
 import { Movie } from "../types";
-import { Play, Star, Bookmark, BookmarkCheck } from "lucide-react";
+import { Play, Star, Bookmark, BookmarkCheck, Pencil } from "lucide-react";
 import { motion } from "motion/react";
 import LazyImage from "./LazyImage";
 
@@ -19,6 +19,7 @@ export default function MovieCard({
   isFavorite,
   onToggleFavorite,
   isRecent,
+  currentUser,
 }: MovieCardProps) {
   return (
     <motion.div
@@ -47,6 +48,21 @@ export default function MovieCard({
           <div className="absolute top-2.5 left-2.5 z-10 bg-gradient-to-r from-red-600 to-amber-500 text-white font-display text-[9px] font-black px-2.5 py-0.5 rounded-md uppercase tracking-wider shadow-md shadow-red-950/45 border border-white/10">
             <span>Recém Chegado</span>
           </div>
+        )}
+
+        {/* Admin Edit Pencil button overlay */}
+        {currentUser?.role === "admin" && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onMovieClick(movie);
+            }}
+            className="absolute top-2.5 left-2.5 z-20 p-2 rounded-full bg-amber-500 hover:bg-amber-400 text-black border border-amber-300 shadow-xl cursor-pointer hover:scale-110 active:scale-90 transition-all"
+            id={`movie-card-edit-btn-${movie.id}`}
+            title="Editar Título (Admin)"
+          >
+            <Pencil className="w-3.5 h-3.5 stroke-[2.5]" />
+          </button>
         )}
 
         {/* Favorite Bookmark Button overlay */}

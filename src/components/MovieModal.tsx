@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { Movie, Review, AdSlotConfig } from "../types";
-import { X, Play, Bookmark, BookmarkCheck, Star, Send, Trash2, ChevronLeft, ChevronRight, Clock, Calendar, User, ArrowLeft, Film, Flag, Maximize2, Minimize2, Tv } from "lucide-react";
+import { X, Play, Bookmark, BookmarkCheck, Star, Send, Trash2, ChevronLeft, ChevronRight, Clock, Calendar, User, ArrowLeft, Film, Flag, Maximize2, Minimize2, Tv, Pencil, Loader2, ExternalLink } from "lucide-react";
 import { saveContinueWatching, getContinueWatchingList } from "../utils/continueWatching";
+import { extractYouTubeId, fetchTrailerFromBackend } from "../utils/trailer";
+import { saveMovieToFirestore } from "../lib/firebase";
 import LazyImage from "./LazyImage";
 import AdBanner from "./AdBanner";
+import EditMovieModal from "./EditMovieModal";
 
 // Helper to get beautiful, themed Netflix-style episode metadata based on genre and index
 const getEpisodeDetails = (type: "serie" | "anime" | "filme", genres: string[] = [], season: number, epNum: number) => {
@@ -124,6 +127,53 @@ export default function MovieModal({
   const [newRating, setNewRating] = useState(5);
   const [authorName, setAuthorName] = useState(currentUser?.name || "");
 
+  // Admin edit modal & dynamic trailer states
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [resolvedTrailerId, setResolvedTrailerId] = useState<string | null>(() => extractYouTubeId(movie.trailerVideoId));
+  const [isFetchingTrailer, setIsFetchingTrailer] = useState(false);
+
+  useEffect(() => {
+    setResolvedTrailerId(extractYouTubeId(movie.trailerVideoId));
+  }, [movie]);
+
+  useEffect(() => {
+    if (playerType === "trailer") {
+      const validId = extractYouTubeId(movie.trailerVideoId);
+      if (validId && validId !== "dQw4w9WgXcQ") {
+        setResolvedTrailerId(validId);
+        return;
+      }
+
+      // If missing or default Rickroll, fetch trailer dynamically from backend
+      let isMounted = true;
+      setIsFetchingTrailer(true);
+      fetchTrailerFromBackend({
+        tmdbId: movie.tmdbId,
+        title: movie.title,
+        type: movie.type,
+        year: movie.year,
+      })
+        .then((newId) => {
+          if (!isMounted) return;
+          setIsFetchingTrailer(false);
+          if (newId) {
+            setResolvedTrailerId(newId);
+            // Auto persist resolved trailer ID to Firestore
+            saveMovieToFirestore({ ...movie, trailerVideoId: newId }).catch((e) =>
+              console.warn("Aviso ao salvar trailer resolvido:", e)
+            );
+          }
+        })
+        .catch(() => {
+          if (isMounted) setIsFetchingTrailer(false);
+        });
+
+      return () => {
+        isMounted = false;
+      };
+    }
+  }, [playerType, movie]);
+
   useEffect(() => {
     if (currentUser?.name) {
       setAuthorName(currentUser.name);
@@ -156,7 +206,8 @@ export default function MovieModal({
   // Helper to generate current player stream URL
   const getPlayerIframeSrc = (type: "superflix" | "warez" | "trailer") => {
     if (type === "trailer") {
-      return `https://www.youtube.com/embed/${movie.trailerVideoId || "d9MyW72ELq0"}?autoplay=1&enablejsapi=1&rel=0`;
+      const activeTrailerId = resolvedTrailerId || extractYouTubeId(movie.trailerVideoId) || "dQw4w9WgXcQ";
+      return `https://www.youtube.com/embed/${activeTrailerId}?autoplay=1&enablejsapi=1&rel=0`;
     }
     const idToUse = movie.imdbId || (movie.tmdbId ? String(movie.tmdbId) : null) || "tt0816692";
     if (type === "superflix") {
@@ -443,15 +494,51 @@ export default function MovieModal({
               : "aspect-video min-h-[210px] sm:min-h-[340px] md:min-h-[460px]"
           }`}>
             {playerType === "trailer" ? (
-              <div className="w-full h-full relative bg-black aspect-video">
-                <iframe
-                  src={`https://www.youtube.com/embed/${movie.trailerVideoId}?autoplay=1&enablejsapi=1&rel=0`}
-                  title={`${movie.title} Trailer`}
-                  className="w-full h-full border-0 absolute inset-0 z-10"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
-                  allowFullScreen
-                  referrerPolicy="no-referrer"
-                />
+              <div className="w-full h-full relative bg-black aspect-video flex items-center justify-center">
+                {isFetchingTrailer ? (
+                  <div className="flex flex-col items-center justify-center p-8 text-amber-400 gap-3">
+                    <Loader2 className="w-8 h-8 animate-spin" />
+                    <span className="font-bold text-xs">Localizando trailer oficial no TMDB...</span>
+                  </div>
+                ) : (resolvedTrailerId || extractYouTubeId(movie.trailerVideoId)) ? (
+                  <>
+                    <iframe
+                      src={`https://www.youtube-nocookie.com/embed/${resolvedTrailerId || extractYouTubeId(movie.trailerVideoId)}?autoplay=1&enablejsapi=1&rel=0&origin=${encodeURIComponent(typeof window !== "undefined" ? window.location.origin : "")}`}
+                      title={`${movie.title} Trailer`}
+                      className="w-full h-full border-0 absolute inset-0 z-10"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+                      allowFullScreen
+                      referrerPolicy="strict-origin-when-cross-origin"
+                    />
+                    <a
+                      href={`https://www.youtube.com/watch?v=${resolvedTrailerId || extractYouTubeId(movie.trailerVideoId)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="absolute top-3 right-3 z-30 px-3 py-1.5 bg-black/80 hover:bg-red-600 text-white border border-gray-700/80 hover:border-red-500 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg backdrop-blur-md cursor-pointer"
+                      title="Assistir no site do YouTube"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 text-red-500 hover:text-white" />
+                      <span>Abrir no YouTube</span>
+                    </a>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-8 text-gray-400 text-center space-y-2 z-10">
+                    <Film className="w-10 h-10 text-amber-500 mb-1" />
+                    <p className="font-extrabold text-sm text-white">Trailer não localizado no TMDB</p>
+                    <p className="text-xs text-gray-400 max-w-md">
+                      Não encontramos um vídeo de trailer para este título. Se você é administrador, clique no botão amarelo "Editar Título" para colar o link do YouTube.
+                    </p>
+                    {currentUser?.role === "admin" && (
+                      <button
+                        onClick={() => setIsEditModalOpen(true)}
+                        className="mt-2 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-extrabold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        <span>Adicionar Trailer Manualmente</span>
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             ) : playerType === "superflix" ? (
               <div className="w-full h-full relative bg-black aspect-video flex flex-col">
@@ -643,6 +730,18 @@ export default function MovieModal({
                           <Film className="w-4 h-4 text-amber-400 shrink-0" />
                           <span>Trailer</span>
                         </button>
+
+                        {currentUser?.role === "admin" && (
+                          <button
+                            onClick={() => setIsEditModalOpen(true)}
+                            className="flex items-center justify-center gap-2 bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-black font-extrabold px-3 sm:px-4 py-2.5 rounded-xl sm:rounded-full cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm border border-amber-500/40 shadow-lg shadow-amber-500/20"
+                            id="modal-edit-admin-btn"
+                            title="Editar Informações do Título (Admin)"
+                          >
+                            <Pencil className="w-4 h-4 shrink-0" />
+                            <span>Editar Título</span>
+                          </button>
+                        )}
 
                         {currentUser && (
                           <button
@@ -1182,6 +1281,21 @@ export default function MovieModal({
           </div>
         </div>
       </div>
+
+      {/* Admin Movie Edit Modal */}
+      {isEditModalOpen && (
+        <EditMovieModal
+          movie={movie}
+          onClose={() => setIsEditModalOpen(false)}
+          onSaveSuccess={(updatedMovie) => {
+            Object.assign(movie, updatedMovie);
+            setResolvedTrailerId(extractYouTubeId(updatedMovie.trailerVideoId));
+          }}
+          onDeleteSuccess={() => {
+            onClose();
+          }}
+        />
+      )}
     </div>
   );
 }

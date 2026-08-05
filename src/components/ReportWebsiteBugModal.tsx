@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { X, Bug, AlertTriangle, CheckCircle2, MessageSquare, LogIn, Sparkles, Send, ShieldAlert } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { X, Bug, AlertTriangle, CheckCircle2, MessageSquare, LogIn, Sparkles, Send, ShieldAlert, Clock } from "lucide-react";
 import { motion } from "motion/react";
 import { User } from "../types";
 
@@ -32,6 +32,37 @@ export default function ReportWebsiteBugModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [countdown, setCountdown] = useState(30);
+
+  const handleCloseSuccess = () => {
+    setSuccess(false);
+    setDescription("");
+    onClose();
+    if (onReportSubmitted) onReportSubmitted();
+  };
+
+  useEffect(() => {
+    let timer: any = null;
+    if (success) {
+      setCountdown(30);
+      timer = setInterval(() => {
+        setCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            setSuccess(false);
+            setDescription("");
+            onClose();
+            if (onReportSubmitted) onReportSubmitted();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [success]);
 
   if (!isOpen) return null;
 
@@ -74,12 +105,6 @@ export default function ReportWebsiteBugModal({
       }
 
       setSuccess(true);
-      setTimeout(() => {
-        setSuccess(false);
-        setDescription("");
-        onClose();
-        if (onReportSubmitted) onReportSubmitted();
-      }, 5000);
     } catch (err: any) {
       setError(err.message && err.message !== "Load failed" ? err.message : "Falha ao enviar relatório. Tente novamente.");
     } finally {
@@ -171,17 +196,22 @@ export default function ReportWebsiteBugModal({
                 Agradecemos por nos ajudar a melhorar o site! Nossa equipe analisará o bug e enviará uma notificação assim que for corrigido.
               </p>
             </div>
-            <button
-              onClick={() => {
-                setSuccess(false);
-                setDescription("");
-                onClose();
-                if (onReportSubmitted) onReportSubmitted();
-              }}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs px-6 py-2.5 rounded-xl transition-all inline-flex items-center justify-center cursor-pointer shadow-lg shadow-emerald-950/80 hover:scale-[1.02]"
-            >
-              Entendi / Fechar
-            </button>
+
+            <div className="pt-2 space-y-3">
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 text-xs font-mono">
+                <Clock className="w-3.5 h-3.5 animate-spin text-emerald-400" style={{ animationDuration: '4s' }} />
+                <span>Fechamento automático em: <strong className="text-white text-xs font-bold">{countdown}s</strong></span>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCloseSuccess}
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs py-3 px-6 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-950/80 hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <X className="w-4 h-4" />
+                <span>Fechar Agora</span>
+              </button>
+            </div>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-3.5">
