@@ -53,3 +53,29 @@ export interface ContinueWatchingItem {
   episode?: number;
   progressPercent: number;
 }
+
+export interface AdSlotConfig {
+  enabled: boolean;
+  type: "code" | "banner";
+  code: string;
+  imageUrl: string;
+  linkUrl: string;
+  altText: string;
+}
+
+export interface SiteAdsConfig {
+  headerAd: AdSlotConfig;
+  homeBetweenRowsAd: AdSlotConfig;
+  playerAd: AdSlotConfig;
+  footerAd: AdSlotConfig;
+  sidebarAd: AdSlotConfig;
+  popunderAd: {
+    enabled: boolean;
+    code: string;
+  };
+}
+
+export interface CustomCodesConfig {
+  headerCode: string;
+  footerCode: string;
+}

@@ -708,6 +708,176 @@ async function startServer() {
     }
   });
 
+  // Custom Codes Config (Header & Footer code)
+  let localCustomCodes = {
+    headerCode: "",
+    footerCode: "",
+    updatedAt: new Date().toISOString()
+  };
+
+  async function getCustomCodesFromDb() {
+    const db = getFirestoreDb();
+    if (db) {
+      try {
+        const docSnap = await db.collection("settings").doc("custom_codes").get();
+        if (docSnap.exists) {
+          const data = docSnap.data();
+          return {
+            headerCode: data?.headerCode || "",
+            footerCode: data?.footerCode || "",
+            updatedAt: data?.updatedAt || localCustomCodes.updatedAt
+          };
+        }
+      } catch (err) {
+        console.warn("Erro ao buscar Códigos Customizados do Firestore:", err);
+      }
+    }
+    return localCustomCodes;
+  }
+
+  // Site Ads Config
+  const defaultAdSlot = {
+    enabled: false,
+    type: "code" as const,
+    code: "",
+    imageUrl: "",
+    linkUrl: "",
+    altText: "Anúncio Patrocinado"
+  };
+
+  let localAdsConfig = {
+    headerAd: { ...defaultAdSlot },
+    homeBetweenRowsAd: { ...defaultAdSlot },
+    playerAd: { ...defaultAdSlot },
+    footerAd: { ...defaultAdSlot },
+    sidebarAd: { ...defaultAdSlot },
+    popunderAd: { enabled: false, code: "" },
+    updatedAt: new Date().toISOString()
+  };
+
+  async function getAdsConfigFromDb() {
+    const db = getFirestoreDb();
+    if (db) {
+      try {
+        const docSnap = await db.collection("settings").doc("ads").get();
+        if (docSnap.exists) {
+          const data = docSnap.data();
+          return {
+            headerAd: { ...defaultAdSlot, ...data?.headerAd },
+            homeBetweenRowsAd: { ...defaultAdSlot, ...data?.homeBetweenRowsAd },
+            playerAd: { ...defaultAdSlot, ...data?.playerAd },
+            footerAd: { ...defaultAdSlot, ...data?.footerAd },
+            sidebarAd: { ...defaultAdSlot, ...data?.sidebarAd },
+            popunderAd: { enabled: Boolean(data?.popunderAd?.enabled), code: data?.popunderAd?.code || "" },
+            updatedAt: data?.updatedAt || localAdsConfig.updatedAt
+          };
+        }
+      } catch (err) {
+        console.warn("Erro ao buscar Configuração de Anúncios do Firestore:", err);
+      }
+    }
+    return localAdsConfig;
+  }
+
+  // UNIFIED PUBLIC API for fast client initial loading
+  app.get("/api/settings/public", async (_req, res) => {
+    try {
+      const [maintenance, customCodes, ads] = await Promise.all([
+        getMaintenanceConfigFromDb(),
+        getCustomCodesFromDb(),
+        getAdsConfigFromDb()
+      ]);
+      res.json({ success: true, maintenance, customCodes, ads });
+    } catch (err: any) {
+      res.json({
+        success: true,
+        maintenance: localMaintenanceConfig,
+        customCodes: localCustomCodes,
+        ads: localAdsConfig
+      });
+    }
+  });
+
+  // GET Custom Codes (Admin)
+  app.get("/api/settings/custom-codes", requireAdmin, async (_req, res) => {
+    try {
+      const customCodes = await getCustomCodesFromDb();
+      res.json({ success: true, customCodes });
+    } catch (err: any) {
+      res.status(500).json({ error: "Erro ao ler códigos customizados." });
+    }
+  });
+
+  // POST Custom Codes (Admin)
+  app.post("/api/settings/custom-codes", requireAdmin, async (req, res) => {
+    try {
+      const { headerCode, footerCode } = req.body;
+      localCustomCodes = {
+        headerCode: typeof headerCode === "string" ? headerCode : "",
+        footerCode: typeof footerCode === "string" ? footerCode : "",
+        updatedAt: new Date().toISOString()
+      };
+
+      const db = getFirestoreDb();
+      if (db) {
+        await db.collection("settings").doc("custom_codes").set(localCustomCodes);
+      }
+
+      res.json({
+        success: true,
+        message: "Códigos do cabeçalho e rodapé salvos com sucesso!",
+        customCodes: localCustomCodes
+      });
+    } catch (err: any) {
+      console.error("Erro ao salvar códigos customizados:", err);
+      res.status(500).json({ error: "Erro interno ao salvar códigos customizados." });
+    }
+  });
+
+  // GET Ads Config (Admin)
+  app.get("/api/settings/ads", requireAdmin, async (_req, res) => {
+    try {
+      const ads = await getAdsConfigFromDb();
+      res.json({ success: true, ads });
+    } catch (err: any) {
+      res.status(500).json({ error: "Erro ao ler configurações de anúncios." });
+    }
+  });
+
+  // POST Ads Config (Admin)
+  app.post("/api/settings/ads", requireAdmin, async (req, res) => {
+    try {
+      const { headerAd, homeBetweenRowsAd, playerAd, footerAd, sidebarAd, popunderAd } = req.body;
+
+      localAdsConfig = {
+        headerAd: { ...defaultAdSlot, ...headerAd },
+        homeBetweenRowsAd: { ...defaultAdSlot, ...homeBetweenRowsAd },
+        playerAd: { ...defaultAdSlot, ...playerAd },
+        footerAd: { ...defaultAdSlot, ...footerAd },
+        sidebarAd: { ...defaultAdSlot, ...sidebarAd },
+        popunderAd: {
+          enabled: Boolean(popunderAd?.enabled),
+          code: String(popunderAd?.code || "")
+        },
+        updatedAt: new Date().toISOString()
+      };
+
+      const db = getFirestoreDb();
+      if (db) {
+        await db.collection("settings").doc("ads").set(localAdsConfig);
+      }
+
+      res.json({
+        success: true,
+        message: "Configurações de anúncios salvas com sucesso!",
+        ads: localAdsConfig
+      });
+    } catch (err: any) {
+      console.error("Erro ao salvar configurações de anúncios:", err);
+      res.status(500).json({ error: "Erro interno ao salvar anúncios." });
+    }
+  });
+
   // ADMIN API: Update system maintenance status
   app.post("/api/settings/maintenance", requireAdmin, async (req, res) => {
     try {
@@ -2297,9 +2467,14 @@ async function startServer() {
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
 
       const response = await fetch("https://superflixapi.pro/calendario.php", {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Accept": "application/json, text/plain, */*",
+          "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        },
         signal: controller.signal,
       }).finally(() => clearTimeout(timeoutId));
 
@@ -2313,7 +2488,7 @@ async function startServer() {
         return res.json({ success: true, data: rawData, cached: false });
       }
 
-      if (cachedCalendarData) {
+      if (cachedCalendarData && cachedCalendarData.length > 0) {
         return res.json({ success: true, data: cachedCalendarData, cached: true });
       }
 
@@ -2323,10 +2498,12 @@ async function startServer() {
       if (cachedCalendarData && cachedCalendarData.length > 0) {
         return res.json({ success: true, data: cachedCalendarData, cached: true });
       }
+      
+      // Fallback: Return empty array with success true so client handles it gracefully instead of crashing
       return res.json({
-        success: false,
-        error: "Não foi possível carregar o calendário remoto no momento. Tente novamente em alguns instantes.",
+        success: true,
         data: [],
+        warning: "Calendário temporariamente indisponível.",
       });
     }
   });

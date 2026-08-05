@@ -108,6 +108,7 @@ export default function ContinueWatchingRow({
               <div className="relative aspect-video w-full bg-gray-950 overflow-hidden">
                 <LazyImage
                   src={movie.backdropUrl || movie.posterUrl}
+                  fallbackSrc={movie.posterUrl || movie.backdropUrl}
                   alt={movie.title}
                   containerClassName="w-full h-full"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 filter brightness-90 group-hover:brightness-100"

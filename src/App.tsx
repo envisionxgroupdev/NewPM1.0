@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Movie, ContinueWatchingItem } from "./types";
+import { Movie, ContinueWatchingItem, CustomCodesConfig, SiteAdsConfig } from "./types";
 import Header from "./components/Header";
 import HeroCarousel from "./components/HeroCarousel";
 import MovieCard from "./components/MovieCard";
@@ -12,6 +12,8 @@ import ReportWebsiteBugModal from "./components/ReportWebsiteBugModal";
 import ProfileModal from "./components/ProfileModal";
 import AdminPanel from "./components/AdminPanel";
 import ReleaseCalendar from "./components/ReleaseCalendar";
+import AdBanner from "./components/AdBanner";
+import CustomScriptInjector from "./components/CustomScriptInjector";
 import { useUserSync } from "./hooks/useUserSync";
 import {
   getContinueWatchingList,
@@ -62,10 +64,17 @@ export default function App() {
     estimatedReturn: "Em breve (Algumas horas)"
   });
 
+  const [customCodes, setCustomCodes] = useState<CustomCodesConfig>({
+    headerCode: "",
+    footerCode: ""
+  });
+
+  const [siteAds, setSiteAds] = useState<SiteAdsConfig | null>(null);
+
   useEffect(() => {
-    const fetchMaintenance = async () => {
+    const fetchPublicSettings = async () => {
       try {
-        const res = await fetch("/api/settings/maintenance");
+        const res = await fetch("/api/settings/public");
         if (res.ok) {
           const data = await res.json();
           if (data.maintenance) {
@@ -91,13 +100,24 @@ export default function App() {
               };
             });
           }
+
+          if (data.customCodes) {
+            setCustomCodes({
+              headerCode: data.customCodes.headerCode || "",
+              footerCode: data.customCodes.footerCode || ""
+            });
+          }
+
+          if (data.ads) {
+            setSiteAds(data.ads);
+          }
         }
       } catch (err) {
-        console.warn("Erro ao buscar status de manutenção:", err);
+        console.warn("Erro ao buscar configurações públicas:", err);
       }
     };
-    fetchMaintenance();
-    const interval = setInterval(fetchMaintenance, 60000);
+    fetchPublicSettings();
+    const interval = setInterval(fetchPublicSettings, 60000);
     return () => clearInterval(interval);
   }, []);
 
@@ -456,6 +476,9 @@ export default function App() {
 
   return (
     <div className="flex flex-col min-h-screen bg-black text-gray-200" id="pipocamax-app-root">
+      {/* Dynamic Header/Footer Custom Scripts and Popunder Ad Injection */}
+      <CustomScriptInjector customCodes={customCodes} popunderAd={siteAds?.popunderAd} />
+
       {/* Admin warning banner when maintenance is enabled */}
       {maintenanceConfig.enabled && currentUser?.role === "admin" && (
         <div className="bg-amber-500 text-black px-4 py-2 flex items-center justify-between text-xs font-extrabold shadow-md z-50">
@@ -496,6 +519,11 @@ export default function App() {
         movies={movies}
       />
 
+      {/* Header Ad Slot (Below Navigation Header) */}
+      <div className="pt-16 sm:pt-20">
+        <AdBanner ad={siteAds?.headerAd} slotName="Anúncio do Topo" className="max-w-7xl mx-auto px-4 py-2" />
+      </div>
+
       {/* Main Content Area */}
       <main className="flex-grow pb-16">
         {activeTab === "admin" && currentUser?.role === "admin" ? (
@@ -515,13 +543,18 @@ export default function App() {
           <>
             {/* Banner Carousel: Only display on Home tab when there is no current search query */}
             {activeTab === "home" && !searchQuery && (
-              <HeroCarousel
-                movies={movies}
-                onMovieClick={handleMovieClick}
-                favorites={favorites}
-                onToggleFavorite={(m) => handleToggleFavorite(m)}
-                currentUser={currentUser}
-              />
+              <>
+                <HeroCarousel
+                  movies={movies}
+                  onMovieClick={handleMovieClick}
+                  favorites={favorites}
+                  onToggleFavorite={(m) => handleToggleFavorite(m)}
+                  currentUser={currentUser}
+                />
+                
+                {/* Home Ad Slot (Between Hero Carousel and Catalog Rows) */}
+                <AdBanner ad={siteAds?.homeBetweenRowsAd} slotName="Anúncio da Home" className="max-w-7xl mx-auto px-4 py-4" />
+              </>
             )}
 
             {/* Catalog Section */}
@@ -820,6 +853,9 @@ export default function App() {
         )}
       </main>
 
+      {/* Footer Ad Slot */}
+      <AdBanner ad={siteAds?.footerAd} slotName="Anúncio do Rodapé" className="max-w-7xl mx-auto px-4 py-4" />
+
       {/* SEO-optimized Footer */}
       <footer className="border-t border-gray-900 bg-[#08080a] pt-10 pb-8 text-xs text-gray-400">
         <div className="max-w-7xl mx-auto px-4 space-y-8">
@@ -999,6 +1035,8 @@ export default function App() {
             initialCinemaMode={modalResumeParams.cinemaMode}
             currentUser={currentUser}
             onOpenAuth={() => setIsAuthModalOpen(true)}
+            playerAd={siteAds?.playerAd}
+            sidebarAd={siteAds?.sidebarAd}
             onOpenReport={(m) => {
               if (!currentUser) {
                 setIsAuthModalOpen(true);

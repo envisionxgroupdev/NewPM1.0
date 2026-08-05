@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { Movie, Review } from "../types";
+import { Movie, Review, AdSlotConfig } from "../types";
 import { X, Play, Bookmark, BookmarkCheck, Star, Send, Trash2, ChevronLeft, ChevronRight, Clock, Calendar, User, ArrowLeft, Film, Flag, Maximize2, Minimize2, Tv } from "lucide-react";
 import { saveContinueWatching, getContinueWatchingList } from "../utils/continueWatching";
 import LazyImage from "./LazyImage";
+import AdBanner from "./AdBanner";
 
 // Helper to get beautiful, themed Netflix-style episode metadata based on genre and index
 const getEpisodeDetails = (type: "serie" | "anime" | "filme", genres: string[] = [], season: number, epNum: number) => {
@@ -78,6 +79,8 @@ interface MovieModalProps {
   initialCinemaMode?: boolean;
   currentUser?: any;
   onOpenAuth?: () => void;
+  playerAd?: AdSlotConfig;
+  sidebarAd?: AdSlotConfig;
 }
 
 const DEFAULT_REVIEWS: Record<string, Omit<Review, "movieId">[]> = {
@@ -110,6 +113,8 @@ export default function MovieModal({
   initialCinemaMode,
   currentUser,
   onOpenAuth,
+  playerAd,
+  sidebarAd,
 }: MovieModalProps) {
   // playerType can be: "none" (cover), "trailer" (YouTube), "superflix" (Superflix API Embed), or "warez" (WarezCDN)
   const [playerType, setPlayerType] = useState<"none" | "trailer" | "superflix" | "warez">("none");
@@ -421,7 +426,7 @@ export default function MovieModal({
         {/* Floating Close Button */}
         <button
           onClick={onClose}
-          className="fixed top-3 right-3 sm:absolute sm:top-4 sm:right-4 z-50 bg-black/90 hover:bg-red-600 text-white w-10 h-10 rounded-full border border-gray-700 shadow-2xl flex items-center justify-center cursor-pointer transition-all hover:scale-105 active:scale-95"
+          className="absolute top-3 right-3 sm:top-4 sm:right-4 z-50 bg-black/80 hover:bg-red-600 text-white w-9 h-9 sm:w-10 sm:h-10 rounded-full border border-gray-700/80 backdrop-blur-md shadow-2xl flex items-center justify-center cursor-pointer transition-all hover:scale-105 active:scale-95"
           id="modal-close-btn"
           title="Fechar"
         >
@@ -434,7 +439,7 @@ export default function MovieModal({
           {/* Header Billboard / Video Player Container */}
           <div className={`relative w-full bg-black border-b border-gray-950 flex flex-col items-center justify-center ${
             playerType === "none"
-              ? "min-h-[360px] sm:min-h-[400px] md:min-h-[460px] overflow-hidden"
+              ? "w-full overflow-hidden"
               : "aspect-video min-h-[210px] sm:min-h-[340px] md:min-h-[460px]"
           }`}>
             {playerType === "trailer" ? (
@@ -471,34 +476,84 @@ export default function MovieModal({
                 />
               </div>
             ) : (
-              <div className="w-full h-full relative flex items-end justify-start min-h-[360px] sm:min-h-[400px] md:min-h-[460px]">
+              <div className="w-full relative flex flex-col justify-end bg-[#080808] min-h-0 sm:min-h-[400px] md:min-h-[460px]">
                 {/* Background poster backdrop */}
-                <div className="absolute inset-0 bg-gradient-to-t from-[#080808] via-[#080808]/75 to-[#080808]/20 z-10" />
-                <div className="absolute inset-0 bg-gradient-to-r from-[#080808]/90 via-transparent to-transparent hidden md:block z-10" />
-                <img
-                  src={movie.backdropUrl}
-                  alt={movie.title}
-                  className="absolute inset-0 w-full h-full object-cover object-center scale-101 filter brightness-45"
-                  referrerPolicy="no-referrer"
-                />
+                <div className="relative w-full h-44 sm:h-auto sm:absolute sm:inset-0 overflow-hidden shrink-0">
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#080808] via-[#080808]/80 to-[#080808]/30 z-10" />
+                  <div className="absolute inset-0 bg-gradient-to-r from-[#080808]/90 via-[#080808]/50 to-transparent z-10 hidden sm:block" />
+                  <LazyImage
+                    src={movie.backdropUrl}
+                    fallbackSrc={movie.posterUrl}
+                    alt={movie.title}
+                    containerClassName="w-full h-full"
+                    className="w-full h-full object-cover object-center filter brightness-60"
+                    loading="eager"
+                    fetchPriority="high"
+                  />
+                </div>
                 
                 {/* Immersive Billboard Details */}
-                <div className="relative z-20 p-4 sm:p-8 md:p-10 w-full flex flex-col md:flex-row gap-4 sm:gap-6 md:gap-10 items-start md:items-end">
-                  {/* Left-side Widescreen Poster */}
-                  <div className="hidden sm:block w-32 md:w-44 aspect-[2/3] rounded-xl overflow-hidden shadow-2xl border border-gray-800/80 shrink-0 transform hover:scale-[1.02] transition-transform duration-300">
-                    <LazyImage
-                      src={movie.posterUrl}
-                      alt={movie.title}
-                      containerClassName="w-full h-full"
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                      decoding="async"
-                      fetchPriority="auto"
-                    />
+                <div className="relative z-20 p-4 sm:p-8 md:p-10 w-full flex flex-col sm:flex-row gap-4 sm:gap-6 md:gap-10 items-start sm:items-end -mt-14 sm:mt-0">
+                  {/* Poster and Basic Info Row on Mobile */}
+                  <div className="flex sm:block items-end gap-3.5 w-full sm:w-auto shrink-0">
+                    {/* Poster */}
+                    <div className="w-24 sm:w-36 md:w-44 aspect-[2/3] rounded-xl overflow-hidden shadow-2xl border-2 border-gray-800/90 shrink-0 transform hover:scale-[1.02] transition-transform duration-300 bg-gray-950">
+                      <LazyImage
+                        src={movie.posterUrl}
+                        fallbackSrc={movie.backdropUrl}
+                        alt={movie.title}
+                        containerClassName="w-full h-full"
+                        className="w-full h-full object-cover"
+                        loading="eager"
+                        fetchPriority="high"
+                      />
+                    </div>
+
+                    {/* Mobile Title & Tags Column next to poster (< sm) */}
+                    <div className="sm:hidden flex-1 min-w-0 pb-0.5">
+                      <div className="flex flex-wrap gap-1 mb-1">
+                        <span className={`inline-block font-mono text-[9px] font-bold px-1.5 py-0.2 rounded uppercase tracking-wider ${
+                          movie.type === "filme"
+                            ? "bg-red-600 text-white"
+                            : movie.type === "serie"
+                            ? "bg-red-700 text-white"
+                            : "bg-amber-500 text-black"
+                        }`}>
+                          {movie.type}
+                        </span>
+                        {(movie.genres || []).slice(0, 3).map((g) => (
+                          <span key={g} className="text-[9px] bg-white/10 text-gray-300 px-1.5 py-0.2 rounded-full font-medium">
+                            {g}
+                          </span>
+                        ))}
+                      </div>
+
+                      <h2 className="font-display font-black text-lg text-white tracking-tight leading-snug drop-shadow-md line-clamp-2">
+                        {movie.title}
+                      </h2>
+
+                      {movie.originalTitle && (
+                        <span className="text-[11px] text-gray-400 italic block truncate">
+                          {movie.originalTitle}
+                        </span>
+                      )}
+
+                      <div className="font-sans text-[11px] text-gray-300 font-medium mt-1 flex flex-wrap items-center gap-1.5">
+                        <span className="text-amber-500 font-bold">⭐ {(movie.rating ?? 8.5).toFixed(1)}</span>
+                        <span className="text-gray-600">•</span>
+                        <span className="text-gray-400">{movie.year || 2026}</span>
+                        {movie.duration && (
+                          <>
+                            <span className="text-gray-600">•</span>
+                            <span className="text-gray-400">{movie.duration}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
                   {/* Right-side Description block */}
-                  <div className="flex-grow min-w-0 w-full">
+                  <div className="flex-grow min-w-0 w-full pr-6 sm:pr-0">
                     <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-2 md:mb-3">
                       <span className={`inline-block font-mono text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
                         movie.type === "filme"
@@ -516,7 +571,7 @@ export default function MovieModal({
                       ))}
                     </div>
 
-                    <h2 className="font-display font-black text-2xl sm:text-3xl md:text-5xl text-white mb-1 tracking-tight leading-tight drop-shadow-md">
+                    <h2 className="font-display font-black text-xl sm:text-3xl md:text-5xl text-white mb-1 tracking-tight leading-tight drop-shadow-md">
                       {movie.title}
                     </h2>
                     
@@ -535,94 +590,96 @@ export default function MovieModal({
                     </p>
                     
                     {/* Primary Streaming Action Row */}
-                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full">
+                    <div className="flex flex-col sm:flex-wrap sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full">
                       <button
                         onClick={() => {
                           setPlayerType("superflix");
                           const scrollable = document.getElementById("modal-scroll-container");
                           if (scrollable) scrollable.scrollTo({ top: 0, behavior: "smooth" });
                         }}
-                        className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-extrabold px-3.5 sm:px-5 py-2.5 rounded-full cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm shadow-lg shadow-red-600/25 border border-transparent min-w-[125px]"
+                        className="w-full sm:w-auto flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-extrabold px-5 py-3 sm:py-2.5 rounded-xl sm:rounded-full cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-sm shadow-lg shadow-red-600/25 border border-transparent"
                         id="modal-play-primary"
                       >
                         <Play className="w-4 h-4 fill-white text-white shrink-0" />
                         <span>Player Principal</span>
                       </button>
 
-                      <button
-                        onClick={() => {
-                          setPlayerType("warez");
-                          const scrollable = document.getElementById("modal-scroll-container");
-                          if (scrollable) scrollable.scrollTo({ top: 0, behavior: "smooth" });
-                        }}
-                        className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-gray-900 hover:bg-gray-800 text-white font-extrabold px-3.5 sm:px-5 py-2.5 rounded-full cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm border border-gray-800 min-w-[125px]"
-                        id="modal-play-secondary"
-                      >
-                        <Play className="w-4 h-4 fill-white text-white shrink-0" />
-                        <span>Player Secundário</span>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          if (playerType === "none") setPlayerType("superflix");
-                          setIsCinemaMode(true);
-                        }}
-                        className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-600 hover:to-indigo-600 text-white font-extrabold px-3.5 sm:px-5 py-2.5 rounded-full cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm shadow-lg shadow-purple-600/30 border border-purple-500/40 min-w-[125px]"
-                        id="modal-play-cinema"
-                        title="Assistir em tela cheia (Modo Cinema)"
-                      >
-                        <Maximize2 className="w-4 h-4 text-white shrink-0" />
-                        <span>Modo Cinema</span>
-                      </button>
-                      
-                      <button
-                        onClick={() => {
-                          setPlayerType("trailer");
-                          const scrollable = document.getElementById("modal-scroll-container");
-                          if (scrollable) scrollable.scrollTo({ top: 0, behavior: "smooth" });
-                        }}
-                        className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-black/80 hover:bg-gray-900 text-gray-300 font-semibold px-3 sm:px-4 py-2.5 rounded-full cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm border border-gray-800 min-w-[100px]"
-                        id="modal-play-trailer"
-                      >
-                        <Film className="w-4 h-4 text-amber-400 shrink-0" />
-                        <span>Trailer</span>
-                      </button>
-
-                      {currentUser && (
+                      <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
                         <button
-                          onClick={() => onToggleFavorite(movie)}
-                          className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 font-semibold px-3 sm:px-4 py-2.5 rounded-full border cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm min-w-[110px] ${
-                            isFavorite
-                              ? "bg-red-600/15 border-red-600 text-red-500"
-                              : "bg-black/80 border-gray-800 text-white hover:border-gray-600"
-                          }`}
-                          id="modal-toggle-list"
+                          onClick={() => {
+                            setPlayerType("warez");
+                            const scrollable = document.getElementById("modal-scroll-container");
+                            if (scrollable) scrollable.scrollTo({ top: 0, behavior: "smooth" });
+                          }}
+                          className="flex items-center justify-center gap-2 bg-gray-900 hover:bg-gray-800 text-white font-extrabold px-3 sm:px-5 py-2.5 rounded-xl sm:rounded-full cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm border border-gray-800"
+                          id="modal-play-secondary"
                         >
-                          {isFavorite ? (
-                            <>
-                              <BookmarkCheck className="w-4 h-4 shrink-0" />
-                              <span>Na Lista</span>
-                            </>
-                          ) : (
-                            <>
-                              <Bookmark className="w-4 h-4 shrink-0" />
-                              <span>Salvar Lista</span>
-                            </>
-                          )}
+                          <Play className="w-4 h-4 fill-white text-white shrink-0" />
+                          <span>Player 2</span>
                         </button>
-                      )}
 
-                      {onOpenReport && (
                         <button
-                          onClick={() => onOpenReport(movie)}
-                          className="flex-1 sm:flex-initial flex items-center justify-center gap-2 font-bold px-3 sm:px-4 py-2.5 rounded-full border border-red-600/60 bg-red-950/40 text-red-400 hover:text-red-200 hover:bg-red-900/60 hover:border-red-500 cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm shadow-md shadow-red-950/30 min-w-[100px]"
-                          id="modal-report-movie-btn"
-                          title="Reportar problema neste título"
+                          onClick={() => {
+                            if (playerType === "none") setPlayerType("superflix");
+                            setIsCinemaMode(true);
+                          }}
+                          className="flex items-center justify-center gap-2 bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-600 hover:to-indigo-600 text-white font-extrabold px-3 sm:px-5 py-2.5 rounded-xl sm:rounded-full cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm shadow-lg shadow-purple-600/30 border border-purple-500/40"
+                          id="modal-play-cinema"
+                          title="Assistir em tela cheia (Modo Cinema)"
                         >
-                          <Flag className="w-4 h-4 text-red-400 fill-red-400/20 shrink-0" />
-                          <span>Reporte</span>
+                          <Maximize2 className="w-4 h-4 text-white shrink-0" />
+                          <span>Modo Cinema</span>
                         </button>
-                      )}
+
+                        <button
+                          onClick={() => {
+                            setPlayerType("trailer");
+                            const scrollable = document.getElementById("modal-scroll-container");
+                            if (scrollable) scrollable.scrollTo({ top: 0, behavior: "smooth" });
+                          }}
+                          className="flex items-center justify-center gap-2 bg-black/80 hover:bg-gray-900 text-gray-300 font-semibold px-3 sm:px-4 py-2.5 rounded-xl sm:rounded-full cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm border border-gray-800"
+                          id="modal-play-trailer"
+                        >
+                          <Film className="w-4 h-4 text-amber-400 shrink-0" />
+                          <span>Trailer</span>
+                        </button>
+
+                        {currentUser && (
+                          <button
+                            onClick={() => onToggleFavorite(movie)}
+                            className={`flex items-center justify-center gap-2 font-semibold px-3 sm:px-4 py-2.5 rounded-xl sm:rounded-full border cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm ${
+                              isFavorite
+                                ? "bg-red-600/15 border-red-600 text-red-500"
+                                : "bg-black/80 border-gray-800 text-white hover:border-gray-600"
+                            }`}
+                            id="modal-toggle-list"
+                          >
+                            {isFavorite ? (
+                              <>
+                                <BookmarkCheck className="w-4 h-4 shrink-0" />
+                                <span>Na Lista</span>
+                              </>
+                            ) : (
+                              <>
+                                <Bookmark className="w-4 h-4 shrink-0" />
+                                <span>Salvar Lista</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+
+                        {onOpenReport && (
+                          <button
+                            onClick={() => onOpenReport(movie)}
+                            className="flex items-center justify-center gap-2 font-bold px-3 sm:px-4 py-2.5 rounded-xl sm:rounded-full border border-red-600/60 bg-red-950/40 text-red-400 hover:text-red-200 hover:bg-red-900/60 hover:border-red-500 cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm shadow-md shadow-red-950/30"
+                            id="modal-report-movie-btn"
+                            title="Reportar problema neste título"
+                          >
+                            <Flag className="w-4 h-4 text-red-400 fill-red-400/20 shrink-0" />
+                            <span>Reporte</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -732,11 +789,23 @@ export default function MovieModal({
             </div>
           )}
 
+          {/* Player Ad Slot */}
+          {playerAd && playerAd.enabled && (
+            <div className="px-5 sm:px-8 pt-4">
+              <AdBanner ad={playerAd} slotName="Anúncio do Player" />
+            </div>
+          )}
+
           {/* Detailed Info Grid */}
           <div className="p-5 sm:p-8 md:p-10 grid grid-cols-1 lg:grid-cols-3 gap-8 md:gap-10">
             
             {/* Left/Middle Column (Synopsis and Episodes) */}
             <div className="lg:col-span-2 space-y-8">
+              
+              {/* Sidebar/In-content Ad Slot */}
+              {sidebarAd && sidebarAd.enabled && (
+                <AdBanner ad={sidebarAd} slotName="Anúncio Recomendado" />
+              )}
               
               {/* Synopsis Section */}
               <div className="space-y-3">
@@ -1083,6 +1152,7 @@ export default function MovieModal({
                         <div className="w-10 h-14 bg-gray-950 rounded-lg overflow-hidden shrink-0 shadow border border-gray-900">
                           <LazyImage
                             src={similar.posterUrl}
+                            fallbackSrc={similar.backdropUrl}
                             alt={similar.title}
                             containerClassName="w-full h-full"
                             className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300"

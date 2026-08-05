@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Popcorn, Search, Zap, Film, Bookmark, Tv, Clapperboard, Shield, LogIn, Info, Bell, CheckCircle2, X, Calendar, Star, ArrowRight } from "lucide-react";
+import LazyImage from "./LazyImage";
 
 interface HeaderProps {
   searchQuery: string;
@@ -376,11 +377,16 @@ export default function Header({
                         }}
                         className="w-full p-2 hover:bg-gray-900/90 transition-colors flex items-center gap-3 text-left cursor-pointer group"
                       >
-                        <img
-                          src={item.backdropUrl || item.posterUrl}
-                          alt={item.title}
-                          className="w-10 h-12 object-cover rounded-lg border border-gray-800/80 group-hover:border-red-600/50 shrink-0 transition-colors"
-                        />
+                        <div className="w-10 h-12 rounded-lg border border-gray-800/80 group-hover:border-red-600/50 shrink-0 overflow-hidden">
+                          <LazyImage
+                            src={item.posterUrl || item.backdropUrl}
+                            fallbackSrc={item.backdropUrl || item.posterUrl}
+                            alt={item.title}
+                            containerClassName="w-full h-full"
+                            className="w-full h-full object-cover"
+                            fallbackIconSize="sm"
+                          />
+                        </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 mb-0.5">
                             <span className={`text-[9px] font-black uppercase px-1.5 py-0.2 rounded border ${

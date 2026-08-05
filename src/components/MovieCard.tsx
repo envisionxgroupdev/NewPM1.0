@@ -32,6 +32,7 @@ export default function MovieCard({
       <div className="relative aspect-[2/3] overflow-hidden bg-gray-900">
         <LazyImage
           src={movie.posterUrl}
+          fallbackSrc={movie.backdropUrl}
           alt={movie.title}
           containerClassName="w-full h-full"
           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"

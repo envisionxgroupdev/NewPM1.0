@@ -4,15 +4,17 @@ import {
   FileSpreadsheet, Database, Sparkle, AlertTriangle, Loader2, Settings,
   Search, Filter, RotateCcw, Star, Zap, CheckCircle2,
   Eye, EyeOff, Play, Square, Flag, UserPlus, User,
-  Bell, Send, Radio, Wrench, ShieldAlert, Ban, Unlock, MessageSquare
+  Bell, Send, Radio, Wrench, ShieldAlert, Ban, Unlock, MessageSquare,
+  Code, Megaphone, FileCode, Layout, Image as ImageIcon
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, AreaChart, Area, CartesianGrid
 } from "recharts";
-import { Movie } from "../types";
+import { Movie, AdSlotConfig, SiteAdsConfig } from "../types";
 import MaintenanceScreen from "./MaintenanceScreen";
+import LazyImage from "./LazyImage";
 
 interface AdminPanelProps {
   movies: Movie[];
@@ -309,6 +311,34 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsFeedback, setSettingsFeedback] = useState({ success: "", error: "" });
 
+  // Custom Header & Footer Codes states
+  const [headerCodeInput, setHeaderCodeInput] = useState("");
+  const [footerCodeInput, setFooterCodeInput] = useState("");
+  const [savingCustomCodes, setSavingCustomCodes] = useState(false);
+  const [customCodesFeedback, setCustomCodesFeedback] = useState({ success: "", error: "" });
+
+  // Ads Config states
+  const defaultAdSlotConfig: AdSlotConfig = useMemo(() => ({
+    enabled: false,
+    type: "code",
+    code: "",
+    imageUrl: "",
+    linkUrl: "",
+    altText: "Anúncio Patrocinado"
+  }), []);
+
+  const [adsConfig, setAdsConfig] = useState<SiteAdsConfig>({
+    headerAd: { ...defaultAdSlotConfig },
+    homeBetweenRowsAd: { ...defaultAdSlotConfig },
+    playerAd: { ...defaultAdSlotConfig },
+    footerAd: { ...defaultAdSlotConfig },
+    sidebarAd: { ...defaultAdSlotConfig },
+    popunderAd: { enabled: false, code: "" }
+  });
+  const [activeAdSlotTab, setActiveAdSlotTab] = useState<"header" | "home" | "player" | "footer" | "sidebar" | "popunder">("header");
+  const [savingAds, setSavingAds] = useState(false);
+  const [adsFeedback, setAdsFeedback] = useState({ success: "", error: "" });
+
   // System Maintenance Mode states
   const [maintEnabled, setMaintEnabled] = useState(false);
   const [maintTitle, setMaintTitle] = useState("Estamos em Manutenção Programada ⚙️");
@@ -317,6 +347,61 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
   const [maintSaving, setMaintSaving] = useState(false);
   const [maintFeedback, setMaintFeedback] = useState({ success: "", error: "" });
   const [maintPreviewOpen, setMaintPreviewOpen] = useState(false);
+
+  const handleSaveCustomCodes = async () => {
+    setSavingCustomCodes(true);
+    setCustomCodesFeedback({ success: "", error: "" });
+    try {
+      const response = await fetch("/api/settings/custom-codes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": currentUser?.email || ""
+        },
+        body: JSON.stringify({
+          headerCode: headerCodeInput,
+          footerCode: footerCodeInput
+        })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setCustomCodesFeedback({ success: data.message || "Códigos salvos com sucesso!", error: "" });
+        showToast(data.message || "Códigos salvos com sucesso!", "success");
+      } else {
+        setCustomCodesFeedback({ success: "", error: data.error || "Erro ao salvar códigos." });
+      }
+    } catch (err: any) {
+      setCustomCodesFeedback({ success: "", error: "Erro de conexão: " + err.message });
+    } finally {
+      setSavingCustomCodes(false);
+    }
+  };
+
+  const handleSaveAds = async () => {
+    setSavingAds(true);
+    setAdsFeedback({ success: "", error: "" });
+    try {
+      const response = await fetch("/api/settings/ads", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": currentUser?.email || ""
+        },
+        body: JSON.stringify(adsConfig)
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setAdsFeedback({ success: data.message || "Configurações de anúncios salvas!", error: "" });
+        showToast(data.message || "Anúncios atualizados!", "success");
+      } else {
+        setAdsFeedback({ success: "", error: data.error || "Erro ao salvar anúncios." });
+      }
+    } catch (err: any) {
+      setAdsFeedback({ success: "", error: "Erro de conexão: " + err.message });
+    } finally {
+      setSavingAds(false);
+    }
+  };
 
   const handleSaveMaintenanceToDb = async () => {
     setMaintSaving(true);
@@ -374,7 +459,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
     }
   };
 
-  // Load TMDB API key and Maintenance config from database on mount
+  // Load TMDB API key, Maintenance config, Custom codes and Ads from database on mount
   useEffect(() => {
     const fetchSettings = async () => {
       try {
@@ -394,22 +479,39 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
       }
 
       try {
-        const resMaint = await fetch("/api/settings/maintenance");
-        if (resMaint.ok) {
-          const dataMaint = await resMaint.json();
-          if (dataMaint.maintenance) {
-            setMaintEnabled(Boolean(dataMaint.maintenance.enabled));
-            if (dataMaint.maintenance.title) setMaintTitle(dataMaint.maintenance.title);
-            if (dataMaint.maintenance.message) setMaintMessage(dataMaint.maintenance.message);
-            if (dataMaint.maintenance.estimatedReturn) setMaintReturn(dataMaint.maintenance.estimatedReturn);
+        const resPublic = await fetch("/api/settings/public");
+        if (resPublic.ok) {
+          const publicData = await resPublic.json();
+          if (publicData.maintenance) {
+            setMaintEnabled(Boolean(publicData.maintenance.enabled));
+            if (publicData.maintenance.title) setMaintTitle(publicData.maintenance.title);
+            if (publicData.maintenance.message) setMaintMessage(publicData.maintenance.message);
+            if (publicData.maintenance.estimatedReturn) setMaintReturn(publicData.maintenance.estimatedReturn);
+          }
+          if (publicData.customCodes) {
+            setHeaderCodeInput(publicData.customCodes.headerCode || "");
+            setFooterCodeInput(publicData.customCodes.footerCode || "");
+          }
+          if (publicData.ads) {
+            setAdsConfig({
+              headerAd: { ...defaultAdSlotConfig, ...publicData.ads.headerAd },
+              homeBetweenRowsAd: { ...defaultAdSlotConfig, ...publicData.ads.homeBetweenRowsAd },
+              playerAd: { ...defaultAdSlotConfig, ...publicData.ads.playerAd },
+              footerAd: { ...defaultAdSlotConfig, ...publicData.ads.footerAd },
+              sidebarAd: { ...defaultAdSlotConfig, ...publicData.ads.sidebarAd },
+              popunderAd: {
+                enabled: Boolean(publicData.ads.popunderAd?.enabled),
+                code: publicData.ads.popunderAd?.code || ""
+              }
+            });
           }
         }
       } catch (err) {
-        console.error("Erro ao buscar Modo de Manutenção:", err);
+        console.error("Erro ao buscar configurações públicas:", err);
       }
     };
     fetchSettings();
-  }, []);
+  }, [defaultAdSlotConfig]);
 
   // Save TMDB API key to local storage when changed
   useEffect(() => {
@@ -1646,14 +1748,16 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                         <tr key={movie.id} className="hover:bg-gray-900/10 transition-colors">
                         {/* Poster */}
                         <td className="py-3 px-4">
-                          <img 
-                            src={movie.posterUrl} 
-                            alt={movie.title}
-                            className="w-10 h-14 object-cover rounded-lg border border-gray-900 shadow-md"
-                            referrerPolicy="no-referrer"
-                            loading="lazy"
-                            decoding="async"
-                          />
+                          <div className="w-10 h-14 rounded-lg border border-gray-900 shadow-md overflow-hidden bg-gray-950">
+                            <LazyImage 
+                              src={movie.posterUrl} 
+                              fallbackSrc={movie.backdropUrl}
+                              alt={movie.title}
+                              containerClassName="w-full h-full"
+                              className="w-full h-full object-cover"
+                              fallbackIconSize="sm"
+                            />
+                          </div>
                         </td>
                         
                         {/* Title and year */}
@@ -3201,6 +3305,392 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                 </button>
               </div>
             </div>
+
+            {/* CARD 3: CÓDIGOS NO CABEÇALHO E RODAPÉ */}
+            <div className="bg-[#0c0c0c] border border-gray-900 p-6 md:p-8 rounded-3xl shadow-xl space-y-6">
+              <div>
+                <h3 className="text-lg font-bold text-gray-200 flex items-center gap-2">
+                  <Code className="w-5 h-5 text-indigo-400" />
+                  <span>Injeção de Códigos Customizados (Cabeçalho & Rodapé)</span>
+                </h3>
+                <p className="text-xs text-gray-400 mt-1 font-sans leading-relaxed">
+                  Adicione scripts de análise (Google Analytics, Meta Pixel, Google Tag Manager), meta tags de verificação, código CSS customizado ou scripts de rodapé.
+                </p>
+              </div>
+
+              <div className="space-y-6 font-sans">
+                {/* Cabeçalho <head> */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-indigo-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                      <FileCode className="w-4 h-4" />
+                      <span>Área para Códigos no Cabeçalho (&lt;head&gt;)</span>
+                    </label>
+                    <span className="text-[11px] text-gray-500">HTML / JS / CSS (&lt;script&gt;, &lt;meta&gt;, &lt;style&gt;)</span>
+                  </div>
+                  <textarea
+                    rows={5}
+                    value={headerCodeInput}
+                    onChange={(e) => setHeaderCodeInput(e.target.value)}
+                    placeholder="Ex: <script async src='https://www.googletagmanager.com/gtag/js?id=G-XXXXX'></script>"
+                    className="w-full bg-black border border-gray-800 focus:border-indigo-500 focus:outline-none text-gray-200 text-xs py-3 px-4 rounded-xl font-mono leading-relaxed transition-all resize-y"
+                  />
+                  <p className="text-[11px] text-gray-500">
+                    Estes códigos serão injetados automaticamente no elemento <code className="text-indigo-300 bg-indigo-950/40 px-1 py-0.5 rounded">&lt;head&gt;</code> do site em todas as páginas.
+                  </p>
+                </div>
+
+                {/* Rodapé <body> */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                      <FileCode className="w-4 h-4" />
+                      <span>Área para Códigos no Rodapé (&lt;body&gt; / Footer)</span>
+                    </label>
+                    <span className="text-[11px] text-gray-500">HTML / JS (Widgets de Chat, Popunders, Tracking)</span>
+                  </div>
+                  <textarea
+                    rows={5}
+                    value={footerCodeInput}
+                    onChange={(e) => setFooterCodeInput(e.target.value)}
+                    placeholder="Ex: <script>console.log('Script de rodapé ativo');</script>"
+                    className="w-full bg-black border border-gray-800 focus:border-emerald-500 focus:outline-none text-gray-200 text-xs py-3 px-4 rounded-xl font-mono leading-relaxed transition-all resize-y"
+                  />
+                  <p className="text-[11px] text-gray-500">
+                    Estes códigos serão injetados no final do elemento <code className="text-emerald-300 bg-emerald-950/40 px-1 py-0.5 rounded">&lt;body&gt;</code> do site.
+                  </p>
+                </div>
+
+                {/* Feedback Alerts */}
+                {customCodesFeedback.error && (
+                  <div className="p-3 bg-red-950/20 border border-red-900/30 text-red-400 text-xs rounded-xl flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>{customCodesFeedback.error}</span>
+                  </div>
+                )}
+
+                {customCodesFeedback.success && (
+                  <div className="p-3 bg-[#00d573]/10 border border-[#00d573]/20 text-[#00d573] text-xs rounded-xl flex items-center gap-2">
+                    <Check className="w-4 h-4 shrink-0" />
+                    <span>{customCodesFeedback.success}</span>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleSaveCustomCodes}
+                  disabled={savingCustomCodes}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-800 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-indigo-600/20"
+                >
+                  {savingCustomCodes ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Salvando Códigos...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Database className="w-4 h-4" />
+                      <span>Salvar Códigos de Cabeçalho e Rodapé</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* CARD 4: GERENCIADOR DE ANÚNCIOS NO SITE */}
+            <div className="bg-[#0c0c0c] border border-gray-900 p-6 md:p-8 rounded-3xl shadow-xl space-y-6">
+              <div>
+                <h3 className="text-lg font-bold text-gray-200 flex items-center gap-2">
+                  <Megaphone className="w-5 h-5 text-amber-500" />
+                  <span>Gerenciador de Anúncios e Banners do Site</span>
+                </h3>
+                <p className="text-xs text-gray-400 mt-1 font-sans leading-relaxed">
+                  Gerencie a exibição de banners publicitários e scripts de anúncios (AdSense, Adsterra, ExoClick, PopAds) em locais estratégicos.
+                </p>
+              </div>
+
+              {/* Slot Sub-Tabs */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar border-b border-gray-900">
+                {[
+                  { id: "header", label: "Topo / Cabeçalho", icon: Layout },
+                  { id: "home", label: "Home (Entre Fileiras)", icon: Film },
+                  { id: "player", label: "Player de Vídeo", icon: Play },
+                  { id: "footer", label: "Rodapé (Footer)", icon: Layout },
+                  { id: "sidebar", label: "Barra Lateral", icon: Square },
+                  { id: "popunder", label: "Popunder / Flutuante", icon: Zap },
+                ].map((tab) => {
+                  const Icon = tab.icon;
+                  const slotKey = tab.id === "home" ? "homeBetweenRowsAd" : tab.id === "popunder" ? "popunderAd" : `${tab.id}Ad`;
+                  const isEnabled = tab.id === "popunder" ? adsConfig.popunderAd.enabled : (adsConfig as any)[slotKey]?.enabled;
+
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setActiveAdSlotTab(tab.id as any)}
+                      className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer border ${
+                        activeAdSlotTab === tab.id
+                          ? "bg-amber-500 text-black border-amber-400 shadow-md shadow-amber-500/20"
+                          : "bg-[#121212] hover:bg-[#181818] text-gray-300 border-gray-800"
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5" />
+                      <span>{tab.label}</span>
+                      <span className={`w-2 h-2 rounded-full ${isEnabled ? "bg-emerald-400 animate-pulse" : "bg-gray-600"}`} />
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* SLOT FORM BODY */}
+              <div className="font-sans space-y-5 bg-[#121212] border border-gray-800/80 p-5 rounded-2xl">
+                {activeAdSlotTab === "popunder" ? (
+                  /* Popunder Slot Form */
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between p-3.5 rounded-xl bg-black border border-gray-800">
+                      <div>
+                        <span className="text-xs font-bold text-white block">Ativar Anúncio Popunder / Script Flutuante</span>
+                        <span className="text-[11px] text-gray-400 block">Abre uma janela ou redirecionamento publicitário em segundo plano.</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAdsConfig((prev) => ({
+                            ...prev,
+                            popunderAd: { ...prev.popunderAd, enabled: !prev.popunderAd.enabled }
+                          }))
+                        }
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ${
+                          adsConfig.popunderAd.enabled ? "bg-emerald-500" : "bg-gray-800"
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg transition duration-200 ${
+                            adsConfig.popunderAd.enabled ? "translate-x-5" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-amber-400 font-bold uppercase tracking-wider block">
+                        Código Script do Popunder / PopAds
+                      </label>
+                      <textarea
+                        rows={4}
+                        value={adsConfig.popunderAd.code}
+                        onChange={(e) =>
+                          setAdsConfig((prev) => ({
+                            ...prev,
+                            popunderAd: { ...prev.popunderAd, code: e.target.value }
+                          }))
+                        }
+                        placeholder="Cole o código do Popunder ou PopAds disponibilizado pela sua rede de anúncios..."
+                        className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-gray-200 text-xs py-2.5 px-3 rounded-xl font-mono leading-relaxed transition-all resize-y"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  /* Standard Ad Slot Form (Header, Home, Player, Footer, Sidebar) */
+                  (() => {
+                    const currentSlotKey =
+                      activeAdSlotTab === "home" ? "homeBetweenRowsAd" : `${activeAdSlotTab}Ad`;
+                    const slotData: AdSlotConfig = (adsConfig as any)[currentSlotKey] || defaultAdSlotConfig;
+
+                    const updateSlot = (fields: Partial<AdSlotConfig>) => {
+                      setAdsConfig((prev) => ({
+                        ...prev,
+                        [currentSlotKey]: { ...((prev as any)[currentSlotKey] || defaultAdSlotConfig), ...fields }
+                      }));
+                    };
+
+                    return (
+                      <div className="space-y-5">
+                        {/* Master Toggle */}
+                        <div className="flex items-center justify-between p-3.5 rounded-xl bg-black border border-gray-800">
+                          <div>
+                            <span className="text-xs font-bold text-white block">
+                              Ativar Anúncio nesta Posição
+                            </span>
+                            <span className="text-[11px] text-gray-400 block">
+                              Exibir no {activeAdSlotTab === "header" ? "Topo do Site" : activeAdSlotTab === "home" ? "Feed Principal da Home" : activeAdSlotTab === "player" ? "Player de Vídeo" : activeAdSlotTab === "footer" ? "Rodapé do Site" : "Barra Lateral"}.
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => updateSlot({ enabled: !slotData.enabled })}
+                            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ${
+                              slotData.enabled ? "bg-emerald-500" : "bg-gray-800"
+                            }`}
+                          >
+                            <span
+                              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg transition duration-200 ${
+                                slotData.enabled ? "translate-x-5" : "translate-x-0"
+                              }`}
+                            />
+                          </button>
+                        </div>
+
+                        {/* Ad Type Selector */}
+                        <div className="space-y-1.5">
+                          <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                            Formato do Anúncio
+                          </label>
+                          <div className="grid grid-cols-2 gap-3">
+                            <button
+                              type="button"
+                              onClick={() => updateSlot({ type: "code" })}
+                              className={`p-3 rounded-xl border text-left cursor-pointer transition-all flex items-center gap-2.5 ${
+                                slotData.type === "code"
+                                  ? "bg-amber-500/15 border-amber-500 text-amber-400 font-bold"
+                                  : "bg-black border-gray-800 text-gray-400 hover:text-gray-200"
+                              }`}
+                            >
+                              <Code className="w-4 h-4 shrink-0" />
+                              <div className="min-w-0">
+                                <span className="text-xs block font-bold leading-none">Código HTML / Script</span>
+                                <span className="text-[10px] text-gray-400 truncate block mt-0.5">AdSense, Adsterra, ExoClick</span>
+                              </div>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => updateSlot({ type: "banner" })}
+                              className={`p-3 rounded-xl border text-left cursor-pointer transition-all flex items-center gap-2.5 ${
+                                slotData.type === "banner"
+                                  ? "bg-amber-500/15 border-amber-500 text-amber-400 font-bold"
+                                  : "bg-black border-gray-800 text-gray-400 hover:text-gray-200"
+                              }`}
+                            >
+                              <ImageIcon className="w-4 h-4 shrink-0" />
+                              <div className="min-w-0">
+                                <span className="text-xs block font-bold leading-none">Banner de Imagem</span>
+                                <span className="text-[10px] text-gray-400 truncate block mt-0.5">Imagem + Link Direto</span>
+                              </div>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Code Mode Input */}
+                        {slotData.type === "code" && (
+                          <div className="space-y-1.5">
+                            <label className="text-xs text-amber-400 font-bold uppercase tracking-wider block">
+                              Código HTML do Anúncio
+                            </label>
+                            <textarea
+                              rows={4}
+                              value={slotData.code}
+                              onChange={(e) => updateSlot({ code: e.target.value })}
+                              placeholder="Cole o código do banner (script / iframe / HTML) da sua rede de anúncios..."
+                              className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-gray-200 text-xs py-2.5 px-3 rounded-xl font-mono leading-relaxed transition-all resize-y"
+                            />
+                          </div>
+                        )}
+
+                        {/* Banner Mode Inputs */}
+                        {slotData.type === "banner" && (
+                          <div className="space-y-3">
+                            <div className="space-y-1">
+                              <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                                URL da Imagem do Banner
+                              </label>
+                              <input
+                                type="text"
+                                value={slotData.imageUrl}
+                                onChange={(e) => updateSlot({ imageUrl: e.target.value })}
+                                placeholder="https://exemplo.com/banner.png"
+                                className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-xs py-2 px-3 rounded-xl transition-all font-mono"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                                  Link de Destino (URL ao Clicar)
+                                </label>
+                                <input
+                                  type="text"
+                                  value={slotData.linkUrl}
+                                  onChange={(e) => updateSlot({ linkUrl: e.target.value })}
+                                  placeholder="https://sitepatrocinador.com"
+                                  className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-xs py-2 px-3 rounded-xl transition-all font-mono"
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                                  Texto Alternativo / Descrição
+                                </label>
+                                <input
+                                  type="text"
+                                  value={slotData.altText}
+                                  onChange={(e) => updateSlot({ altText: e.target.value })}
+                                  placeholder="Anúncio Patrocinado"
+                                  className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-xs py-2 px-3 rounded-xl transition-all"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Banner Live Preview */}
+                            {slotData.imageUrl && (
+                              <div className="pt-2">
+                                <span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider block mb-1">
+                                  Pré-visualização do Banner:
+                                </span>
+                                <div className="p-3 bg-black rounded-xl border border-gray-800 flex items-center justify-center">
+                                  <a href={slotData.linkUrl || "#"} target="_blank" rel="noreferrer">
+                                    <img
+                                      src={slotData.imageUrl}
+                                      alt={slotData.altText}
+                                      className="max-h-24 object-contain rounded-lg"
+                                    />
+                                  </a>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()
+                )}
+              </div>
+
+              {/* Feedback Alerts */}
+              {adsFeedback.error && (
+                <div className="p-3 bg-red-950/20 border border-red-900/30 text-red-400 text-xs rounded-xl flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{adsFeedback.error}</span>
+                </div>
+              )}
+
+              {adsFeedback.success && (
+                <div className="p-3 bg-[#00d573]/10 border border-[#00d573]/20 text-[#00d573] text-xs rounded-xl flex items-center gap-2">
+                  <Check className="w-4 h-4 shrink-0" />
+                  <span>{adsFeedback.success}</span>
+                </div>
+              )}
+
+              {/* Save Ads Button */}
+              <button
+                type="button"
+                onClick={handleSaveAds}
+                disabled={savingAds}
+                className="w-full bg-amber-600 hover:bg-amber-500 disabled:bg-gray-800 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-amber-600/20"
+              >
+                {savingAds ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Salvando Anúncios...</span>
+                  </>
+                ) : (
+                  <>
+                    <Database className="w-4 h-4" />
+                    <span>Salvar Configurações de Anúncios</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         )}
 
@@ -3922,14 +4412,16 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                                 }`}
                               >
                                 {/* Poster */}
-                                <img 
-                                  src={item.posterUrl} 
-                                  alt={item.title} 
-                                  className="w-16 h-24 object-cover rounded-xl bg-gray-950 shrink-0 shadow-md"
-                                  referrerPolicy="no-referrer"
-                                  loading="lazy"
-                                  decoding="async"
-                                />
+                                <div className="w-16 h-24 rounded-xl bg-gray-950 shrink-0 shadow-md overflow-hidden">
+                                  <LazyImage 
+                                    src={item.posterUrl} 
+                                    fallbackSrc={item.backdropUrl}
+                                    alt={item.title} 
+                                    containerClassName="w-full h-full"
+                                    className="w-full h-full object-cover"
+                                    fallbackIconSize="sm"
+                                  />
+                                </div>
 
                                 {/* Info */}
                                 <div className="flex flex-col justify-between flex-grow min-w-0 py-0.5">

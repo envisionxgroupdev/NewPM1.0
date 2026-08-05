@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { X, Flag, AlertTriangle, CheckCircle2, MessageSquare, LogIn, Sparkles, Send, ShieldAlert } from "lucide-react";
 import { motion } from "motion/react";
 import { Movie, User } from "../types";
+import LazyImage from "./LazyImage";
 
 interface ReportModalProps {
   isOpen: boolean;
@@ -144,11 +145,16 @@ export default function ReportModal({
         {/* Target Movie Card Preview if available */}
         {movie && (
           <div className="mb-3.5 p-2.5 rounded-xl bg-black/60 border border-red-950/50 flex items-center gap-3">
-            <img 
-              src={movie.backdropUrl || movie.posterUrl} 
-              alt={movie.title}
-              className="w-10 h-12 object-cover rounded-lg border border-red-900/30 shrink-0" 
-            />
+            <div className="w-10 h-12 rounded-lg border border-red-900/30 shrink-0 overflow-hidden">
+              <LazyImage 
+                src={movie.backdropUrl || movie.posterUrl}
+                fallbackSrc={movie.posterUrl || movie.backdropUrl} 
+                alt={movie.title}
+                containerClassName="w-full h-full"
+                className="w-full h-full object-cover" 
+                fallbackIconSize="sm"
+              />
+            </div>
             <div className="min-w-0 flex-1">
               <span className="text-[9px] font-bold text-red-400 uppercase tracking-wider block">
                 {movie.type === "serie" ? "Série" : movie.type === "anime" ? "Anime" : "Filme"}

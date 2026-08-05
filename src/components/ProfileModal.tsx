@@ -489,6 +489,7 @@ export default function ProfileModal({
                       <div className="aspect-[2/3] relative overflow-hidden bg-gray-950">
                         <LazyImage
                           src={movie.posterUrl}
+                          fallbackSrc={movie.backdropUrl}
                           alt={movie.title}
                           containerClassName="w-full h-full"
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
