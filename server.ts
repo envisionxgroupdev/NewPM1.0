@@ -342,6 +342,10 @@ async function fetchUsersFromDb() {
               password: u.password || "",
               role: u.role || "user",
               status: u.status || "active",
+              registeredIp: u.registeredIp || null,
+              failedAttempts: Number(u.failedAttempts || 0),
+              lockoutUntil: u.lockoutUntil || null,
+              lockoutReason: u.lockoutReason || null,
               createdAt: safeIsoDate(u.createdAt) || new Date().toISOString()
             });
           });
@@ -1537,22 +1541,112 @@ async function startServer() {
         });
       }
 
+      const now = Date.now();
+
+      // Check if user is manually banned by admin
       if (user.status === "banned") {
         return res.status(403).json({
           success: false,
           banned: true,
-          error: "Conta Bloqueada",
-          details: "Seu acesso foi bloqueado ou banido por um administrador do sistema PipocaMax."
+          error: "Conta Bloqueada por Administrador",
+          details: user.lockoutReason || "Seu acesso foi bloqueado ou banido por um administrador do sistema PipocaMax."
         });
       }
 
-      const userPass = String(user.password || "").trim();
+      // Check if user is currently locked out due to password attempts
+      if (user.lockoutUntil) {
+        const lockoutTime = new Date(user.lockoutUntil).getTime();
+        if (lockoutTime > now) {
+          const remainingSec = Math.ceil((lockoutTime - now) / 1000);
+          let remainingText = `${remainingSec} segundo(s)`;
+          if (remainingSec >= 60 && remainingSec < 3600) {
+            remainingText = `${Math.ceil(remainingSec / 60)} minuto(s)`;
+          } else if (remainingSec >= 3600) {
+            const hours = (remainingSec / 3600).toFixed(1);
+            remainingText = `${hours} horas`;
+          }
 
-      if (userPass !== password && !(user.role === "admin" && (password === "admin" || userPass === ""))) {
+          return res.status(403).json({
+            success: false,
+            locked: true,
+            error: "Conta Bloqueada por Tentativas de Senha",
+            details: `Sua conta está bloqueada temporariamente por erros consecutivos de senha. Tente novamente em ${remainingText}.`,
+            lockoutReason: user.lockoutReason,
+            lockoutUntil: user.lockoutUntil
+          });
+        }
+      }
+
+      const userPass = String(user.password || "").trim();
+      const isAdminBypass = user.role === "admin" && (password === "admin" || userPass === "");
+
+      if (userPass !== password && !isAdminBypass) {
+        const currentFailed = (user.failedAttempts || 0) + 1;
+        user.failedAttempts = currentFailed;
+
+        let lockoutReason = null;
+        let lockoutUntil = null;
+        let errorMessage = "Senha incorreta.";
+        let detailsMessage = `Você errou a senha (tentativa ${currentFailed} de 3).`;
+
+        if (currentFailed === 3) {
+          // 3rd attempt: Lock for 1 minute
+          lockoutUntil = new Date(now + 60 * 1000).toISOString();
+          lockoutReason = "3 tentativas incorretas de senha (Bloqueado por 1 minuto)";
+          user.lockoutUntil = lockoutUntil;
+          user.lockoutReason = lockoutReason;
+
+          errorMessage = "Conta Bloqueada por 1 Minuto";
+          detailsMessage = "Você errou a senha 3 vezes consecutivas. Sua conta foi bloqueada por 1 minuto por segurança.";
+        } else if (currentFailed >= 4) {
+          // 4th+ attempt: Lock for 24 hours (24 * 60 * 60 * 1000 ms)
+          lockoutUntil = new Date(now + 24 * 60 * 60 * 1000).toISOString();
+          lockoutReason = "4+ tentativas incorretas de senha (Bloqueado por 24 horas)";
+          user.lockoutUntil = lockoutUntil;
+          user.lockoutReason = lockoutReason;
+
+          errorMessage = "Conta Bloqueada por 24 Horas";
+          detailsMessage = "Você errou a senha novamente após o bloqueio inicial. Sua conta foi bloqueada por 24h00 por segurança.";
+        }
+
+        // Save failed attempt state to Firestore
+        const db = getFirestoreDb();
+        if (db && user.id) {
+          try {
+            await db.collection("users").doc(user.id).set({
+              failedAttempts: currentFailed,
+              lockoutUntil: user.lockoutUntil || null,
+              lockoutReason: user.lockoutReason || null
+            }, { merge: true });
+          } catch (e) {
+            console.warn("Erro ao salvar falha de senha no Firestore:", e);
+          }
+        }
+
         return res.status(401).json({ 
-          error: "Senha incorreta.",
-          details: "Verifique a senha digitada ou altere para a senha correta."
+          error: errorMessage,
+          details: detailsMessage,
+          failedAttempts: currentFailed,
+          lockoutUntil: user.lockoutUntil
         });
+      }
+
+      // Password is CORRECT -> Reset lockout and failed attempts
+      user.failedAttempts = 0;
+      user.lockoutUntil = null;
+      user.lockoutReason = null;
+
+      const db = getFirestoreDb();
+      if (db && user.id) {
+        try {
+          await db.collection("users").doc(user.id).set({
+            failedAttempts: 0,
+            lockoutUntil: null,
+            lockoutReason: null
+          }, { merge: true });
+        } catch (e) {
+          console.warn("Erro ao zerar tentativas de login no Firestore:", e);
+        }
       }
 
       // Return user details without password
@@ -1579,9 +1673,23 @@ async function startServer() {
       password = String(password).trim();
       name = String(name).trim();
 
+      const rawIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0].trim() || req.socket.remoteAddress || req.ip || "127.0.0.1";
+      const clientIp = rawIp.replace(/^.*:/, ""); // strip IPv6 prefix if any
+
       // Sync users first
       const users = await fetchUsersFromDb();
-      
+
+      // Rule: Only 1 account per IP address
+      if (clientIp && clientIp !== "127.0.0.1" && clientIp !== "localhost" && clientIp !== "::1") {
+        const existingIpUser = users.find(u => u.registeredIp === clientIp || u.registeredIp === rawIp);
+        if (existingIpUser) {
+          return res.status(400).json({
+            error: "Limite de Cadastro por IP Atingido",
+            details: `Já existe uma conta cadastrada neste endereço IP (${existingIpUser.email}). É permitido apenas 1 cadastro por IP por segurança.`
+          });
+        }
+      }
+
       if (users.some(u => u.email && u.email.trim().toLowerCase() === email)) {
         return res.status(400).json({ error: "Este e-mail já está cadastrado. Clique em 'Faça login aqui'." });
       }
@@ -1593,6 +1701,10 @@ async function startServer() {
         password,
         role: role === "admin" ? "admin" : "user",
         status: "active",
+        registeredIp: clientIp,
+        failedAttempts: 0,
+        lockoutUntil: null,
+        lockoutReason: null,
         createdAt: new Date().toISOString()
       };
 
@@ -1609,9 +1721,13 @@ async function startServer() {
             password: newUser.password,
             role: newUser.role,
             status: "active",
+            registeredIp: newUser.registeredIp,
+            failedAttempts: 0,
+            lockoutUntil: null,
+            lockoutReason: null,
             createdAt: newUser.createdAt
           });
-          console.log("Usuário cadastrado com sucesso no Firestore!");
+          console.log("Usuário cadastrado com sucesso no Firestore com suporte a trava de IP!");
         } catch (e: any) {
           console.error("Erro ao cadastrar usuário no Firestore (prosseguindo com login local):", e);
         }
@@ -1646,6 +1762,71 @@ async function startServer() {
     } catch (err: any) {
       console.error("Erro ao registrar usuário:", err);
       res.status(500).json({ error: "Erro interno ao registrar usuário." });
+    }
+  });
+
+  // Users management API: unlock user account after lockout
+  app.post("/api/users/:id/unlock", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      await fetchUsersFromDb();
+
+      let targetUser = localUsersList.find(
+        u => u.id === id || (u.email && u.email.trim().toLowerCase() === id.trim().toLowerCase())
+      );
+
+      if (!targetUser) {
+        return res.status(404).json({ error: "Usuário não encontrado." });
+      }
+
+      targetUser.failedAttempts = 0;
+      targetUser.lockoutUntil = null;
+      targetUser.lockoutReason = null;
+      if (targetUser.status === "banned") {
+        targetUser.status = "active";
+      }
+
+      const targetEmail = (targetUser.email || (id.includes("@") ? id : "")).trim().toLowerCase();
+
+      localUsersList.forEach(u => {
+        if (u.id === id || (targetEmail && u.email && u.email.trim().toLowerCase() === targetEmail)) {
+          u.failedAttempts = 0;
+          u.lockoutUntil = null;
+          u.lockoutReason = null;
+          if (u.status === "banned") u.status = "active";
+        }
+      });
+
+      const db = getFirestoreDb();
+      if (db) {
+        try {
+          const updateData = {
+            failedAttempts: 0,
+            lockoutUntil: null,
+            lockoutReason: null,
+            status: "active"
+          };
+          await db.collection("users").doc(targetUser.id || id).set(updateData, { merge: true });
+          if (targetEmail) {
+            const querySnap = await db.collection("users").where("email", "==", targetEmail).get();
+            if (!querySnap.empty) {
+              for (const docSnap of querySnap.docs) {
+                await db.collection("users").doc(docSnap.id).set(updateData, { merge: true });
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("Erro ao desbloquear usuário no Firestore:", e);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: `A conta de ${targetUser.name} (${targetUser.email}) foi desbloqueada com sucesso!`
+      });
+    } catch (err: any) {
+      console.error("Erro ao desbloquear usuário:", err);
+      res.status(500).json({ error: "Erro interno ao desbloquear usuário." });
     }
   });
 

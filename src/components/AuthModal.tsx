@@ -51,14 +51,17 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalP
         data = {};
       }
 
-      if (!response.ok || data.banned || response.status === 403) {
+      if (!response.ok || data.banned || data.locked || response.status === 403) {
+        if (data.details) {
+          throw new Error(`${data.error}: ${data.details}`);
+        }
         if (
           response.status === 403 ||
           data.banned ||
           data.error === "Conta Bloqueada" ||
           (data.error && String(data.error).toLowerCase().includes("bloquead"))
         ) {
-          throw new Error("Conta Bloqueada: Seu acesso foi bloqueado ou banido por um administrador do sistema PipocaMax.");
+          throw new Error("Conta Bloqueada: Seu acesso foi bloqueado por um administrador ou por tentativas incorretas de senha.");
         }
         const errMsg = data.error || "Algo deu errado ao autenticar.";
         const details = data.details ? ` (${data.details})` : "";
