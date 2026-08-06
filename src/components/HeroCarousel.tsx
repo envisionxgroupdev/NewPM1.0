@@ -252,10 +252,10 @@ export default function HeroCarousel({
                 onClick={() => onMovieClick(currentMovie)}
                 className="flex items-center gap-1.5 sm:gap-2 bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-black font-extrabold px-3.5 sm:px-5 py-2 sm:py-3 rounded-full border border-amber-500/40 backdrop-blur-md cursor-pointer hover:scale-103 active:scale-97 transition-all text-xs sm:text-sm shadow-lg shadow-amber-500/20"
                 id={`hero-btn-edit-${currentMovie.id}`}
-                title="Editar Título (Admin)"
+                title={currentMovie.type === "serie" ? "Editar Série (Admin)" : currentMovie.type === "anime" ? "Editar Anime (Admin)" : "Editar Filme (Admin)"}
               >
                 <Pencil className="w-4 h-4 text-amber-400 shrink-0" />
-                <span>Editar</span>
+                <span>{currentMovie.type === "serie" ? "Editar Série" : currentMovie.type === "anime" ? "Editar Anime" : "Editar Filme"}</span>
               </button>
             )}
 

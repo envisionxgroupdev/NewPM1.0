@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Movie, Review, AdSlotConfig } from "../types";
-import { X, Play, Bookmark, BookmarkCheck, Star, Send, Trash2, ChevronLeft, ChevronRight, Clock, Calendar, User, ArrowLeft, Film, Flag, Maximize2, Minimize2, Tv, Pencil, Loader2, ExternalLink } from "lucide-react";
+import { X, Play, Bookmark, BookmarkCheck, Star, Send, Trash2, ChevronLeft, ChevronRight, Clock, Calendar, User, ArrowLeft, Film, Flag, Pencil, Loader2, ExternalLink } from "lucide-react";
 import { saveContinueWatching, getContinueWatchingList } from "../utils/continueWatching";
 import { extractYouTubeId, fetchTrailerFromBackend } from "../utils/trailer";
 import { saveMovieToFirestore } from "../lib/firebase";
@@ -79,7 +79,6 @@ interface MovieModalProps {
   initialPlayerType?: "none" | "trailer" | "superflix" | "warez";
   initialSeason?: number;
   initialEpisode?: number;
-  initialCinemaMode?: boolean;
   currentUser?: any;
   onOpenAuth?: () => void;
   playerAd?: AdSlotConfig;
@@ -113,7 +112,6 @@ export default function MovieModal({
   initialPlayerType,
   initialSeason,
   initialEpisode,
-  initialCinemaMode,
   currentUser,
   onOpenAuth,
   playerAd,
@@ -121,7 +119,6 @@ export default function MovieModal({
 }: MovieModalProps) {
   // playerType can be: "none" (cover), "trailer" (YouTube), "superflix" (Superflix API Embed), or "warez" (WarezCDN)
   const [playerType, setPlayerType] = useState<"none" | "trailer" | "superflix" | "warez">("none");
-  const [isCinemaMode, setIsCinemaMode] = useState(false);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [newComment, setNewComment] = useState("");
   const [newRating, setNewRating] = useState(5);
@@ -239,16 +236,13 @@ export default function MovieModal({
       setPlayerType(initialPlayerType);
       setCurrentSeason(initialSeason || continueItem?.season || 1);
       setCurrentEpisode(initialEpisode || continueItem?.episode || 1);
-      setIsCinemaMode(!!initialCinemaMode);
     } else if (continueItem) {
       // Set season & episode from previous history
       setCurrentSeason(continueItem.season || 1);
       setCurrentEpisode(continueItem.episode || 1);
       setPlayerType("none");
-      setIsCinemaMode(false);
     } else {
       setPlayerType("none");
-      setIsCinemaMode(false);
       setCurrentSeason(1);
       setCurrentEpisode(1);
     }
@@ -264,7 +258,7 @@ export default function MovieModal({
       setReviews(initial);
       localStorage.setItem(`reviews_${movie.id}`, JSON.stringify(initial));
     }
-  }, [movie, initialPlayerType, initialSeason, initialEpisode, initialCinemaMode]);
+  }, [movie, initialPlayerType, initialSeason, initialEpisode]);
 
   // Increment watching timer every second while active player ("superflix" or "warez") is open
   useEffect(() => {
@@ -293,17 +287,6 @@ export default function MovieModal({
       saveContinueWatching(movie, playerType, currentSeason, currentEpisode);
     }
   }, [hasReachedThreshold, playerType, currentSeason, currentEpisode, movie]);
-
-  // Keydown handler to close Cinema Mode on Escape key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isCinemaMode) {
-        setIsCinemaMode(false);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isCinemaMode]);
 
   const handleSubmitReview = (e: React.FormEvent) => {
     e.preventDefault();
@@ -367,110 +350,6 @@ export default function MovieModal({
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLdData) }}
       />
       
-      {/* Fullscreen Cinema Mode View Overlay */}
-      {isCinemaMode && (
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col w-screen h-screen overflow-hidden animate-fade-in" id="cinema-mode-container">
-          {/* Top Header Bar in Cinema Mode */}
-          <div className="bg-[#0b0b0b]/95 backdrop-blur-md px-3 sm:px-5 py-2.5 border-b border-gray-900 flex flex-wrap items-center justify-between gap-2.5 shrink-0 shadow-2xl z-20">
-            
-            {/* Title and Metadata */}
-            <div className="flex items-center gap-2.5 min-w-0">
-              <span className="bg-purple-600/20 text-purple-400 border border-purple-500/40 text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider flex items-center gap-1 shrink-0">
-                <Tv className="w-3 h-3 text-purple-400" />
-                <span>Modo Cinema</span>
-              </span>
-              <h3 className="text-white font-extrabold text-xs sm:text-base truncate max-w-[140px] sm:max-w-md">
-                {movie.title}
-              </h3>
-              {movie.type !== "filme" && (
-                <span className="font-mono text-[11px] sm:text-xs font-bold text-red-500 bg-red-950/40 border border-red-900/60 px-2 py-0.5 rounded shrink-0">
-                  T{currentSeason} : E{currentEpisode}
-                </span>
-              )}
-            </div>
-
-            {/* Server & Controls bar in Cinema Mode */}
-            <div className="flex items-center gap-2 flex-wrap">
-              {/* Server selector tabs */}
-              <div className="flex items-center gap-1 bg-[#141414] p-1 rounded-lg border border-gray-800">
-                <button
-                  onClick={() => setPlayerType("superflix")}
-                  className={`px-2 py-1 rounded text-xs font-bold transition-all cursor-pointer ${
-                    playerType === "superflix"
-                      ? "bg-red-600 text-white shadow-md shadow-red-600/30"
-                      : "text-gray-400 hover:text-white"
-                  }`}
-                >
-                  Player 1
-                </button>
-                <button
-                  onClick={() => setPlayerType("warez")}
-                  className={`px-2 py-1 rounded text-xs font-bold transition-all cursor-pointer ${
-                    playerType === "warez"
-                      ? "bg-red-600 text-white shadow-md shadow-red-600/30"
-                      : "text-gray-400 hover:text-white"
-                  }`}
-                >
-                  Player 2
-                </button>
-                <button
-                  onClick={() => setPlayerType("trailer")}
-                  className={`px-2 py-1 rounded text-xs font-bold transition-all cursor-pointer ${
-                    playerType === "trailer"
-                      ? "bg-amber-600 text-white"
-                      : "text-gray-400 hover:text-white"
-                  }`}
-                >
-                  Trailer
-                </button>
-              </div>
-
-              {/* Episode selector buttons for series */}
-              {movie.type !== "filme" && (playerType === "superflix" || playerType === "warez") && (
-                <div className="flex items-center bg-[#141414] border border-gray-800 rounded-lg p-0.5">
-                  <button
-                    disabled={currentEpisode <= 1}
-                    onClick={() => setCurrentEpisode((prev) => Math.max(1, prev - 1))}
-                    className="p-1 text-white hover:bg-gray-800 disabled:opacity-20 rounded transition-colors cursor-pointer"
-                    title="Episódio Anterior"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setCurrentEpisode((prev) => prev + 1)}
-                    className="p-1 text-white hover:bg-gray-800 rounded transition-colors cursor-pointer"
-                    title="Próximo Episódio"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
-
-              {/* Exit Cinema Mode */}
-              <button
-                onClick={() => setIsCinemaMode(false)}
-                className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-extrabold px-3 py-1.5 rounded-lg text-xs transition-all shadow-lg cursor-pointer ml-1"
-                title="Sair do Modo Cinema (pressione ESC)"
-              >
-                <Minimize2 className="w-3.5 h-3.5 shrink-0" />
-                <span>Sair do Modo Cinema (ESC)</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Fullscreen Video Iframe Container */}
-          <div className="flex-1 w-full h-full bg-black relative">
-            <iframe
-              src={getPlayerIframeSrc(playerType === "none" ? "superflix" : playerType)}
-              title={`Player Cinema - ${movie.title}`}
-              className="w-full h-full border-0 absolute inset-0"
-              allowFullScreen
-              allow="autoplay; encrypted-media; picture-in-picture"
-            />
-          </div>
-        </div>
-      )}
-
       {/* Container Card - Seamless full-viewport on mobile, rounded modal card on desktop */}
       <div className="relative w-full min-h-screen sm:min-h-0 sm:max-h-[92vh] sm:my-auto max-w-5xl bg-[#080808] sm:border sm:border-gray-900/80 sm:rounded-2xl overflow-y-auto shadow-2xl flex flex-col scrollbar-thin" id="modal-scroll-container">
         
@@ -526,7 +405,7 @@ export default function MovieModal({
                     <Film className="w-10 h-10 text-amber-500 mb-1" />
                     <p className="font-extrabold text-sm text-white">Trailer não localizado no TMDB</p>
                     <p className="text-xs text-gray-400 max-w-md">
-                      Não encontramos um vídeo de trailer para este título. Se você é administrador, clique no botão amarelo "Editar Título" para colar o link do YouTube.
+                      Não encontramos um vídeo de trailer para este item. Se você é administrador, clique no botão amarelo de edição para colar o link do YouTube.
                     </p>
                     {currentUser?.role === "admin" && (
                       <button
@@ -707,19 +586,6 @@ export default function MovieModal({
 
                         <button
                           onClick={() => {
-                            if (playerType === "none") setPlayerType("superflix");
-                            setIsCinemaMode(true);
-                          }}
-                          className="flex items-center justify-center gap-2 bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-600 hover:to-indigo-600 text-white font-extrabold px-3 sm:px-5 py-2.5 rounded-xl sm:rounded-full cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm shadow-lg shadow-purple-600/30 border border-purple-500/40"
-                          id="modal-play-cinema"
-                          title="Assistir em tela cheia (Modo Cinema)"
-                        >
-                          <Maximize2 className="w-4 h-4 text-white shrink-0" />
-                          <span>Modo Cinema</span>
-                        </button>
-
-                        <button
-                          onClick={() => {
                             setPlayerType("trailer");
                             const scrollable = document.getElementById("modal-scroll-container");
                             if (scrollable) scrollable.scrollTo({ top: 0, behavior: "smooth" });
@@ -736,10 +602,12 @@ export default function MovieModal({
                             onClick={() => setIsEditModalOpen(true)}
                             className="flex items-center justify-center gap-2 bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-black font-extrabold px-3 sm:px-4 py-2.5 rounded-xl sm:rounded-full cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all text-xs sm:text-sm border border-amber-500/40 shadow-lg shadow-amber-500/20"
                             id="modal-edit-admin-btn"
-                            title="Editar Informações do Título (Admin)"
+                            title={movie.type === "serie" ? "Editar Informações da Série (Admin)" : movie.type === "anime" ? "Editar Informações do Anime (Admin)" : "Editar Informações do Filme (Admin)"}
                           >
                             <Pencil className="w-4 h-4 shrink-0" />
-                            <span>Editar Título</span>
+                            <span>
+                              {movie.type === "serie" ? "Editar Série" : movie.type === "anime" ? "Editar Anime" : "Editar Filme"}
+                            </span>
                           </button>
                         )}
 
@@ -828,16 +696,6 @@ export default function MovieModal({
                 >
                   <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
                   <span>Trailer</span>
-                </button>
-
-                <button
-                  onClick={() => setIsCinemaMode(true)}
-                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer bg-purple-950/60 hover:bg-purple-900 border border-purple-800/80 text-purple-300 hover:text-white shadow-md shadow-purple-950/20"
-                  title="Expandir para o Modo Cinema em Tela Cheia"
-                  id="modal-option-cinema"
-                >
-                  <Maximize2 className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                  <span>Modo Cinema</span>
                 </button>
               </div>
 

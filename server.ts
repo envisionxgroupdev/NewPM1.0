@@ -556,7 +556,8 @@ async function startServer() {
   // Security Middleware: Require Admin privileges for restricted endpoints
   const requireAdmin = async (req: any, res: any, next: any) => {
     try {
-      let email = req.headers["x-user-email"];
+      let rawHeaderEmail = req.headers["x-user-email"];
+      let email = rawHeaderEmail ? decodeURIComponent(String(rawHeaderEmail)) : "";
       if (!email || email === "undefined" || email === "null" || email === "") {
         // Fallback for default admin requests in local dev
         email = "admin@pipocamax.com";
@@ -1247,6 +1248,222 @@ async function startServer() {
     } catch (err: any) {
       console.error("Erro ao importar direto do TMDB/Calendário:", err);
       res.status(500).json({ error: err.message || "Erro interno ao adicionar título." });
+    }
+  });
+
+  // API route to refresh/sync movie, series, or anime data from TMDB / IMDb
+  app.post("/api/tmdb/refresh-movie", requireAdmin, async (req, res) => {
+    try {
+      let { movieId, tmdbId, imdbId, title, type } = req.body;
+      const rawApiKey = req.headers["x-tmdb-api-key"] as string;
+      const clientApiKey = rawApiKey ? decodeURIComponent(rawApiKey) : "";
+
+      let apiKey = clientApiKey || process.env.TMDB_API_KEY;
+      if (!apiKey) {
+        apiKey = await getTmdbApiKeyFromDb();
+      }
+
+      if (!apiKey) {
+        return res.status(400).json({ error: "Chave de API do TMDB/IMDb não configurada. Configure a chave em Configurações." });
+      }
+
+      // Find existing movie from local state if movieId is provided
+      let existingMovie: any = null;
+      if (movieId) {
+        existingMovie = localMoviesList.find(m => m.id === movieId);
+        if (!existingMovie) {
+          const db = getFirestoreDb();
+          if (db) {
+            const doc = await db.collection("movies").doc(movieId).get();
+            if (doc.exists) {
+              existingMovie = { id: doc.id, ...doc.data() };
+            }
+          }
+        }
+      }
+
+      // If missing parameters, use existing movie data if available
+      if (existingMovie) {
+        if (!tmdbId && existingMovie.tmdbId) tmdbId = existingMovie.tmdbId;
+        if (!imdbId && existingMovie.imdbId) imdbId = existingMovie.imdbId;
+        if (!title && existingMovie.title) title = existingMovie.title;
+        if (!type && existingMovie.type) type = existingMovie.type;
+      }
+
+      let tmdbType = type === "serie" || type === "tv" || type === "anime" ? "tv" : "movie";
+
+      // If tmdbId is missing but imdbId is present, find via external ID lookup
+      if (!tmdbId && imdbId) {
+        try {
+          const findUrl = `https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${apiKey}&external_source=imdb_id&language=pt-BR`;
+          const findRes = await fetch(findUrl);
+          if (findRes.ok) {
+            const findData = await findRes.json();
+            if (findData.movie_results && findData.movie_results.length > 0) {
+              tmdbId = findData.movie_results[0].id;
+              tmdbType = "movie";
+            } else if (findData.tv_results && findData.tv_results.length > 0) {
+              tmdbId = findData.tv_results[0].id;
+              tmdbType = "tv";
+            }
+          }
+        } catch (fErr) {
+          console.warn("Aviso ao buscar tmdbId por imdbId:", fErr);
+        }
+      }
+
+      // If tmdbId is still missing but title is provided, search TMDB by title
+      if (!tmdbId && title) {
+        try {
+          const searchUrl = `https://api.themoviedb.org/3/search/${tmdbType}?api_key=${apiKey}&query=${encodeURIComponent(title)}&language=pt-BR&include_adult=false`;
+          const sRes = await fetch(searchUrl);
+          if (sRes.ok) {
+            const sData = await sRes.json();
+            if (sData.results && sData.results.length > 0) {
+              tmdbId = sData.results[0].id;
+            }
+          }
+        } catch (sErr) {
+          console.warn("Aviso ao buscar tmdbId por título:", sErr);
+        }
+      }
+
+      if (!tmdbId) {
+        return res.status(404).json({ error: "Título não foi localizado no TMDB/IMDb para sincronização." });
+      }
+
+      // Fetch full details from TMDB
+      const appendParams = tmdbType === "tv" ? "credits,videos,external_ids" : "credits,videos";
+      const detailsUrl = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}?api_key=${apiKey}&language=pt-BR&append_to_response=${appendParams}`;
+      const response = await fetch(detailsUrl);
+
+      if (!response.ok) {
+        return res.status(400).json({ error: "Erro ao obter dados do TMDB/IMDb. Verifique o ID do título ou a chave de API." });
+      }
+
+      const data = await response.json();
+
+      // Extract updated metadata
+      const genres = (data.genres || []).map((g: any) => g.name);
+      if (genres.length === 0 && existingMovie?.genres) {
+        genres.push(...existingMovie.genres);
+      }
+
+      let director = existingMovie?.director || "Desconhecido";
+      let cast: string[] = existingMovie?.cast || [];
+
+      if (data.credits) {
+        if (data.credits.crew) {
+          const dirObj = data.credits.crew.find((member: any) => member.job === "Director" || member.job === "Executive Producer");
+          if (dirObj) director = dirObj.name;
+        }
+        if (data.credits.cast && data.credits.cast.length > 0) {
+          cast = data.credits.cast.slice(0, 6).map((c: any) => c.name);
+        }
+      }
+
+      let trailerVideoId = existingMovie?.trailerVideoId || "dQw4w9WgXcQ";
+      if (data.videos && data.videos.results) {
+        const trailer = data.videos.results.find((v: any) => v.type === "Trailer" && v.site === "YouTube");
+        if (trailer) {
+          trailerVideoId = trailer.key;
+        } else if (data.videos.results.length > 0) {
+          const anyVid = data.videos.results.find((v: any) => v.site === "YouTube");
+          if (anyVid) trailerVideoId = anyVid.key;
+        }
+      }
+
+      // Secondary fallback for trailer
+      if ((!trailerVideoId || trailerVideoId === "dQw4w9WgXcQ") && tmdbId && apiKey) {
+        try {
+          const extraVUrl = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}/videos?api_key=${apiKey}`;
+          const extraVRes = await fetch(extraVUrl);
+          if (extraVRes.ok) {
+            const extraVData = await extraVRes.json();
+            if (extraVData.results && extraVData.results.length > 0) {
+              const tr = extraVData.results.find((v: any) => v.type === "Trailer" && v.site === "YouTube") ||
+                         extraVData.results.find((v: any) => v.site === "YouTube");
+              if (tr) trailerVideoId = tr.key;
+            }
+          }
+        } catch (vErr) {
+          console.warn("Aviso na busca de trailer no refresh:", vErr);
+        }
+      }
+
+      let duration = existingMovie?.duration || "120 min";
+      if (tmdbType === "movie") {
+        if (data.runtime) duration = `${data.runtime} min`;
+      } else {
+        const seasons = data.number_of_seasons || 1;
+        duration = `${seasons} Temp${seasons > 1 ? "s" : ""}`;
+      }
+
+      let fetchedImdbId = existingMovie?.imdbId || "";
+      if (tmdbType === "movie") {
+        fetchedImdbId = data.imdb_id || fetchedImdbId;
+      } else if (data.external_ids && data.external_ids.imdb_id) {
+        fetchedImdbId = data.external_ids.imdb_id;
+      }
+
+      const releaseYear = data.release_date 
+        ? new Date(data.release_date).getFullYear() 
+        : (data.first_air_date ? new Date(data.first_air_date).getFullYear() : (existingMovie?.year || 2026));
+
+      const updatedTitle = data.title || data.name || existingMovie?.title || title || "Sem título";
+      const updatedOriginalTitle = data.original_title || data.original_name || existingMovie?.originalTitle || updatedTitle;
+      const updatedSynopsis = data.overview || existingMovie?.synopsis || "Sem sinopse disponível.";
+      const updatedPoster = data.poster_path ? `https://image.tmdb.org/t/p/w500${data.poster_path}` : (existingMovie?.posterUrl || "");
+      const updatedBackdrop = data.backdrop_path ? `https://image.tmdb.org/t/p/w1280${data.backdrop_path}` : (existingMovie?.backdropUrl || updatedPoster);
+      const updatedRating = Number((data.vote_average || existingMovie?.rating || 8.0).toFixed(1));
+
+      const refreshedData = {
+        title: updatedTitle,
+        originalTitle: updatedOriginalTitle,
+        synopsis: updatedSynopsis,
+        year: isNaN(releaseYear) ? 2026 : releaseYear,
+        duration,
+        rating: updatedRating,
+        genres,
+        cast,
+        director,
+        posterUrl: updatedPoster,
+        backdropUrl: updatedBackdrop,
+        trailerVideoId,
+        imdbId: fetchedImdbId,
+        tmdbId: String(data.id),
+        updatedAt: new Date().toISOString()
+      };
+
+      // If an existing movie ID was specified or found, update it in DB & memory
+      let targetMovie: any = null;
+      if (existingMovie) {
+        targetMovie = {
+          ...existingMovie,
+          ...refreshedData
+        };
+
+        const db = getFirestoreDb();
+        if (db) {
+          await db.collection("movies").doc(targetMovie.id).set(targetMovie, { merge: true });
+        }
+
+        const idx = localMoviesList.findIndex(m => m.id === targetMovie.id);
+        if (idx >= 0) {
+          localMoviesList[idx] = targetMovie;
+        }
+      }
+
+      res.json({
+        success: true,
+        message: `Dados e sinopse de "${updatedTitle}" atualizados com sucesso via IMDb/TMDB!`,
+        data: refreshedData,
+        movie: targetMovie || refreshedData
+      });
+
+    } catch (err: any) {
+      console.error("Erro ao atualizar dados do IMDb/TMDB:", err);
+      res.status(500).json({ error: err.message || "Erro interno ao atualizar dados do título." });
     }
   });
 
@@ -2808,12 +3025,56 @@ async function startServer() {
     const protocol = req.headers["x-forwarded-proto"] || "https";
     const baseUrl = `${protocol}://${host}`;
     res.send(
-      `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /admin\nSitemap: ${baseUrl}/sitemap.xml\n`
+      `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /admin\n\nSitemap: ${baseUrl}/sitemap_index.xml\nSitemap: ${baseUrl}/sitemap.xml\n`
     );
   });
 
-  // SEO: Dynamic XML Sitemap
-  app.get("/sitemap.xml", async (req, res) => {
+  // Helper to fetch live catalog for sitemaps
+  async function getSitemapCatalog() {
+    let catalogMovies = localMoviesList || MOVIES_DATA;
+    try {
+      const fetched = await fetchTitlesFromDb();
+      if (Array.isArray(fetched) && fetched.length > 0) {
+        catalogMovies = fetched;
+      }
+    } catch (e) {
+      // Fallback to localMoviesList / MOVIES_DATA
+    }
+    return catalogMovies;
+  }
+
+  // Helper to build a urlset XML string
+  function buildUrlSetXml(baseUrl: string, items: { url: string; lastmod?: string; changefreq?: string; priority?: string; image?: { loc: string; title: string } }[]) {
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+    xml += `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n`;
+    const nowIso = new Date().toISOString();
+
+    items.forEach((item) => {
+      const fullLoc = `${baseUrl}${item.url}`.replace(/&/g, "&amp;");
+      xml += `  <url>\n`;
+      xml += `    <loc>${fullLoc}</loc>\n`;
+      xml += `    <lastmod>${item.lastmod || nowIso}</lastmod>\n`;
+      xml += `    <changefreq>${item.changefreq || "daily"}</changefreq>\n`;
+      xml += `    <priority>${item.priority || "0.8"}</priority>\n`;
+      if (item.image && item.image.loc) {
+        const imgUrl = item.image.loc.replace(/&/g, "&amp;");
+        const imgTitle = (item.image.title || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        xml += `    <image:image>\n`;
+        xml += `      <image:loc>${imgUrl}</image:loc>\n`;
+        if (imgTitle) {
+          xml += `      <image:title>${imgTitle}</image:title>\n`;
+        }
+        xml += `    </image:image>\n`;
+      }
+      xml += `  </url>\n`;
+    });
+
+    xml += `</urlset>`;
+    return xml;
+  }
+
+  // SEO: Sitemap Index (sitemap_index.xml and sitemap.xml)
+  const handleSitemapIndex = async (req: any, res: any) => {
     res.type("application/xml");
     try {
       const host = req.headers.host || "pipocamax.com";
@@ -2821,20 +3082,160 @@ async function startServer() {
       const baseUrl = `${protocol}://${host}`;
       const nowIso = new Date().toISOString();
 
-      let catalogMovies = localMoviesList || MOVIES_DATA;
-      try {
-        const fetched = await fetchTitlesFromDb();
-        if (Array.isArray(fetched) && fetched.length > 0) {
-          catalogMovies = fetched;
-        }
-      } catch (e) {
-        // Fallback to localMoviesList / MOVIES_DATA
-      }
-
       let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-      xml += `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n`;
+      xml += `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`;
 
-      // Static Main Pages
+      const sitemaps = [
+        "/sitemap-main.xml",
+        "/sitemap-filmes.xml",
+        "/sitemap-series.xml",
+        "/sitemap-animes.xml",
+      ];
+
+      sitemaps.forEach((smPath) => {
+        xml += `  <sitemap>\n`;
+        xml += `    <loc>${baseUrl}${smPath}</loc>\n`;
+        xml += `    <lastmod>${nowIso}</lastmod>\n`;
+        xml += `  </sitemap>\n`;
+      });
+
+      xml += `</sitemapindex>`;
+      res.send(xml);
+    } catch (err) {
+      console.error("Erro ao gerar sitemap index:", err);
+      res.status(500).send("<error>Erro ao gerar sitemap index</error>");
+    }
+  };
+
+  app.get("/sitemap_index.xml", handleSitemapIndex);
+
+  // SEO: /sitemap.xml (Returns Sitemap Index, or if requested with ?format=all returns unified sitemap)
+  app.get("/sitemap.xml", async (req, res) => {
+    if (req.query.format === "all") {
+      return res.redirect("/sitemap-all.xml");
+    }
+    return handleSitemapIndex(req, res);
+  });
+
+  // SEO: Sub-sitemap Main Pages
+  app.get("/sitemap-main.xml", (req, res) => {
+    res.type("application/xml");
+    const host = req.headers.host || "pipocamax.com";
+    const protocol = req.headers["x-forwarded-proto"] || "https";
+    const baseUrl = `${protocol}://${host}`;
+
+    const mainRoutes = [
+      { url: "/", priority: "1.0", changefreq: "daily" },
+      { url: "/?type=filme", priority: "0.9", changefreq: "daily" },
+      { url: "/?type=serie", priority: "0.9", changefreq: "daily" },
+      { url: "/?type=anime", priority: "0.9", changefreq: "daily" },
+    ];
+
+    res.send(buildUrlSetXml(baseUrl, mainRoutes));
+  });
+
+  // SEO: Sub-sitemap Filmes
+  app.get("/sitemap-filmes.xml", async (req, res) => {
+    res.type("application/xml");
+    try {
+      const host = req.headers.host || "pipocamax.com";
+      const protocol = req.headers["x-forwarded-proto"] || "https";
+      const baseUrl = `${protocol}://${host}`;
+
+      const catalog = await getSitemapCatalog();
+      const filmes = catalog.filter((m: any) => !m.type || m.type === "filme");
+
+      const items = filmes.map((m: any) => {
+        const mediaParam = encodeURIComponent(m.id || m.title || "filme");
+        return {
+          url: `/?media=${mediaParam}`,
+          changefreq: "weekly",
+          priority: "0.8",
+          image: (m.posterUrl || m.backdropUrl) ? {
+            loc: m.posterUrl || m.backdropUrl,
+            title: m.title || ""
+          } : undefined
+        };
+      });
+
+      res.send(buildUrlSetXml(baseUrl, items));
+    } catch (err) {
+      console.error("Erro em sitemap-filmes.xml:", err);
+      res.status(500).send("<error>Erro ao gerar sitemap de filmes</error>");
+    }
+  });
+
+  // SEO: Sub-sitemap Séries
+  app.get("/sitemap-series.xml", async (req, res) => {
+    res.type("application/xml");
+    try {
+      const host = req.headers.host || "pipocamax.com";
+      const protocol = req.headers["x-forwarded-proto"] || "https";
+      const baseUrl = `${protocol}://${host}`;
+
+      const catalog = await getSitemapCatalog();
+      const series = catalog.filter((m: any) => m.type === "serie");
+
+      const items = series.map((m: any) => {
+        const mediaParam = encodeURIComponent(m.id || m.title || "serie");
+        return {
+          url: `/?media=${mediaParam}`,
+          changefreq: "daily",
+          priority: "0.8",
+          image: (m.posterUrl || m.backdropUrl) ? {
+            loc: m.posterUrl || m.backdropUrl,
+            title: m.title || ""
+          } : undefined
+        };
+      });
+
+      res.send(buildUrlSetXml(baseUrl, items));
+    } catch (err) {
+      console.error("Erro em sitemap-series.xml:", err);
+      res.status(500).send("<error>Erro ao gerar sitemap de séries</error>");
+    }
+  });
+
+  // SEO: Sub-sitemap Animes
+  app.get("/sitemap-animes.xml", async (req, res) => {
+    res.type("application/xml");
+    try {
+      const host = req.headers.host || "pipocamax.com";
+      const protocol = req.headers["x-forwarded-proto"] || "https";
+      const baseUrl = `${protocol}://${host}`;
+
+      const catalog = await getSitemapCatalog();
+      const animes = catalog.filter((m: any) => m.type === "anime");
+
+      const items = animes.map((m: any) => {
+        const mediaParam = encodeURIComponent(m.id || m.title || "anime");
+        return {
+          url: `/?media=${mediaParam}`,
+          changefreq: "daily",
+          priority: "0.8",
+          image: (m.posterUrl || m.backdropUrl) ? {
+            loc: m.posterUrl || m.backdropUrl,
+            title: m.title || ""
+          } : undefined
+        };
+      });
+
+      res.send(buildUrlSetXml(baseUrl, items));
+    } catch (err) {
+      console.error("Erro em sitemap-animes.xml:", err);
+      res.status(500).send("<error>Erro ao gerar sitemap de animes</error>");
+    }
+  });
+
+  // SEO: Unified Sitemap (All Items)
+  app.get("/sitemap-all.xml", async (req, res) => {
+    res.type("application/xml");
+    try {
+      const host = req.headers.host || "pipocamax.com";
+      const protocol = req.headers["x-forwarded-proto"] || "https";
+      const baseUrl = `${protocol}://${host}`;
+
+      const catalog = await getSitemapCatalog();
       const mainRoutes = [
         { url: "/", priority: "1.0", changefreq: "daily" },
         { url: "/?type=filme", priority: "0.9", changefreq: "daily" },
@@ -2842,42 +3243,23 @@ async function startServer() {
         { url: "/?type=anime", priority: "0.9", changefreq: "daily" },
       ];
 
-      mainRoutes.forEach((route) => {
-        const fullLoc = `${baseUrl}${route.url}`.replace(/&/g, "&amp;");
-        xml += `  <url>\n`;
-        xml += `    <loc>${fullLoc}</loc>\n`;
-        xml += `    <lastmod>${nowIso}</lastmod>\n`;
-        xml += `    <changefreq>${route.changefreq}</changefreq>\n`;
-        xml += `    <priority>${route.priority}</priority>\n`;
-        xml += `  </url>\n`;
-      });
-
-      // Catalog Items (Movies / Series / Animes)
-      catalogMovies.forEach((m: any) => {
+      const catalogItems = catalog.map((m: any) => {
         const mediaParam = encodeURIComponent(m.id || m.title || "midia");
-        const rawUrl = `${baseUrl}/?media=${mediaParam}`;
-        const escapedUrl = rawUrl.replace(/&/g, "&amp;");
-        xml += `  <url>\n`;
-        xml += `    <loc>${escapedUrl}</loc>\n`;
-        xml += `    <lastmod>${nowIso}</lastmod>\n`;
-        xml += `    <changefreq>weekly</changefreq>\n`;
-        xml += `    <priority>0.8</priority>\n`;
-        if (m.posterUrl || m.backdropUrl) {
-          const imgUrl = (m.posterUrl || m.backdropUrl).replace(/&/g, "&amp;");
-          const imgTitle = (m.title || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-          xml += `    <image:image>\n`;
-          xml += `      <image:loc>${imgUrl}</image:loc>\n`;
-          xml += `      <image:title>${imgTitle}</image:title>\n`;
-          xml += `    </image:image>\n`;
-        }
-        xml += `  </url>\n`;
+        return {
+          url: `/?media=${mediaParam}`,
+          changefreq: "weekly",
+          priority: "0.8",
+          image: (m.posterUrl || m.backdropUrl) ? {
+            loc: m.posterUrl || m.backdropUrl,
+            title: m.title || ""
+          } : undefined
+        };
       });
 
-      xml += `</urlset>`;
-      res.send(xml);
+      res.send(buildUrlSetXml(baseUrl, [...mainRoutes, ...catalogItems]));
     } catch (err) {
-      console.error("Erro ao gerar sitemap.xml:", err);
-      res.status(500).send("<error>Erro ao gerar sitemap</error>");
+      console.error("Erro em sitemap-all.xml:", err);
+      res.status(500).send("<error>Erro ao gerar sitemap unificado</error>");
     }
   });
 

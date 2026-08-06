@@ -59,7 +59,7 @@ export default function MovieCard({
             }}
             className="absolute top-2.5 left-2.5 z-20 p-2 rounded-full bg-amber-500 hover:bg-amber-400 text-black border border-amber-300 shadow-xl cursor-pointer hover:scale-110 active:scale-90 transition-all"
             id={`movie-card-edit-btn-${movie.id}`}
-            title="Editar Título (Admin)"
+            title={movie.type === "serie" ? "Editar Série (Admin)" : movie.type === "anime" ? "Editar Anime (Admin)" : "Editar Filme (Admin)"}
           >
             <Pencil className="w-3.5 h-3.5 stroke-[2.5]" />
           </button>

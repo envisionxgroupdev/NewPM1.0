@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Movie } from "../types";
-import { X, Save, Trash2, Sparkles, Loader2, Film, Check, AlertCircle } from "lucide-react";
+import { X, Save, Trash2, Sparkles, Loader2, Film, Check, AlertCircle, RotateCcw } from "lucide-react";
 import { saveMovieToFirestore, deleteMovieFromFirestore } from "../lib/firebase";
 import { extractYouTubeId, fetchTrailerFromBackend } from "../utils/trailer";
 
@@ -37,8 +37,70 @@ export default function EditMovieModal({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [autoTrailerLoading, setAutoTrailerLoading] = useState(false);
+  const [refreshingImdb, setRefreshingImdb] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const handleRefreshFromImdb = async () => {
+    setRefreshingImdb(true);
+    setStatusMsg(null);
+    try {
+      const storedApiKey = localStorage.getItem("tmdb_api_key") || "";
+      const rawUserEmail = localStorage.getItem("pipocamax_user_email") || "admin@pipocamax.com";
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "x-user-email": encodeURIComponent(rawUserEmail.trim())
+      };
+      if (storedApiKey.trim()) {
+        headers["x-tmdb-api-key"] = encodeURIComponent(storedApiKey.trim());
+      }
+
+      const res = await fetch("/api/tmdb/refresh-movie", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          movieId: movie.id,
+          tmdbId: tmdbId || undefined,
+          imdbId: imdbId || undefined,
+          title: title || undefined,
+          type: type || "filme"
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao atualizar dados do IMDb/TMDB.");
+      }
+
+      const refreshed = data.data || data.movie;
+      if (refreshed) {
+        if (refreshed.title) setTitle(refreshed.title);
+        if (refreshed.originalTitle) setOriginalTitle(refreshed.originalTitle);
+        if (refreshed.synopsis) setSynopsis(refreshed.synopsis);
+        if (refreshed.rating) setRating(refreshed.rating);
+        if (refreshed.year) setYear(refreshed.year);
+        if (refreshed.duration) setDuration(refreshed.duration);
+        if (refreshed.genres && Array.isArray(refreshed.genres)) setGenres(refreshed.genres.join(", "));
+        if (refreshed.cast && Array.isArray(refreshed.cast)) setCast(refreshed.cast.join(", "));
+        if (refreshed.director) setDirector(refreshed.director);
+        if (refreshed.posterUrl) setPosterUrl(refreshed.posterUrl);
+        if (refreshed.backdropUrl) setBackdropUrl(refreshed.backdropUrl);
+        if (refreshed.trailerVideoId) setTrailerVideoId(refreshed.trailerVideoId);
+        if (refreshed.imdbId) setImdbId(refreshed.imdbId);
+        if (refreshed.tmdbId) setTmdbId(refreshed.tmdbId);
+
+        setStatusMsg({ text: `Sinopse e dados de "${refreshed.title || title}" atualizados com sucesso via IMDb/TMDB!`, type: "success" });
+        if (onSaveSuccess && data.movie) {
+          onSaveSuccess(data.movie);
+        }
+      }
+    } catch (err: any) {
+      console.error("Erro ao atualizar do IMDb:", err);
+      setStatusMsg({ text: err.message || "Erro ao buscar atualizações do IMDb.", type: "error" });
+    } finally {
+      setRefreshingImdb(false);
+    }
+  };
 
   const handleAutoFetchTrailer = async () => {
     setAutoTrailerLoading(true);
@@ -177,6 +239,32 @@ export default function EditMovieModal({
 
         {/* Form Body */}
         <form onSubmit={handleSave} className="p-5 overflow-y-auto space-y-4 flex-1 scrollbar-thin text-xs">
+          {/* IMDb Data Refresh Action Bar */}
+          <div className="flex items-center justify-between bg-[#151515] p-3 rounded-xl border border-gray-800/80">
+            <div className="text-gray-300 font-bold flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>Sincronizar Dados do Catálogo</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleRefreshFromImdb}
+              disabled={refreshingImdb}
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:bg-gray-800 text-black font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-amber-500/20 shrink-0"
+            >
+              {refreshingImdb ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Sincronizando...</span>
+                </>
+              ) : (
+                <>
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Atualizar Dados do IMDb</span>
+                </>
+              )}
+            </button>
+          </div>
+
           {/* Row 1: Title & Original Title */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>

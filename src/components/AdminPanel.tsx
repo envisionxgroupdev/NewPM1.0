@@ -71,6 +71,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
   const [formSubmitting, setFormSubmitting] = useState(false);
+  const [syncingMovieId, setSyncingMovieId] = useState<string | null>(null);
 
   // Catalog search and filter states
   const [catalogSearch, setCatalogSearch] = useState("");
@@ -1056,12 +1057,88 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
     setTrailerVideoId(movie.trailerVideoId);
     setCast(movie.cast.join(", "));
     setDirector(movie.director);
-    setFeatured(movie.featured || false);
-    setImdbId(movie.imdbId || "");
-
     setFormError("");
     setFormSuccess("");
     setIsFormOpen(true);
+  };
+
+  // Sync / Refresh movie data from IMDb / TMDB
+  const handleSyncMovieImdb = async (movieToSync?: Movie) => {
+    const targetMovie = movieToSync || editingMovie;
+    const targetId = targetMovie?.id;
+    const targetTmdbId = targetMovie?.tmdbId;
+    const targetImdbId = imdbId || targetMovie?.imdbId;
+    const targetTitle = title || targetMovie?.title;
+    const targetType = type || targetMovie?.type || "filme";
+
+    if (targetId) {
+      setSyncingMovieId(targetId);
+    } else {
+      setSyncingMovieId("form");
+    }
+
+    setFormError("");
+    setFormSuccess("");
+
+    try {
+      const storedApiKey = localStorage.getItem("tmdb_api_key") || tmdbApiKey || "";
+      const rawUserEmail = currentUser?.email || localStorage.getItem("pipocamax_user_email") || "admin@pipocamax.com";
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "x-user-email": encodeURIComponent(rawUserEmail.trim())
+      };
+      if (storedApiKey.trim()) {
+        headers["x-tmdb-api-key"] = encodeURIComponent(storedApiKey.trim());
+      }
+
+      const res = await fetch("/api/tmdb/refresh-movie", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          movieId: targetId || undefined,
+          tmdbId: targetTmdbId || undefined,
+          imdbId: targetImdbId || undefined,
+          title: targetTitle || undefined,
+          type: targetType || "filme"
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao atualizar dados do IMDb/TMDB.");
+      }
+
+      const refreshed = data.data || data.movie;
+      if (refreshed) {
+        if (refreshed.title) setTitle(refreshed.title);
+        if (refreshed.originalTitle) setOriginalTitle(refreshed.originalTitle);
+        if (refreshed.synopsis) setSynopsis(refreshed.synopsis);
+        if (refreshed.rating) setRating(refreshed.rating);
+        if (refreshed.year) setYear(refreshed.year);
+        if (refreshed.duration) setDuration(refreshed.duration);
+        if (refreshed.genres && Array.isArray(refreshed.genres)) setGenres(refreshed.genres.join(", "));
+        if (refreshed.cast && Array.isArray(refreshed.cast)) setCast(refreshed.cast.join(", "));
+        if (refreshed.director) setDirector(refreshed.director);
+        if (refreshed.posterUrl) setPosterUrl(refreshed.posterUrl);
+        if (refreshed.backdropUrl) setBackdropUrl(refreshed.backdropUrl);
+        if (refreshed.trailerVideoId) setTrailerVideoId(refreshed.trailerVideoId);
+        if (refreshed.imdbId) setImdbId(refreshed.imdbId);
+      }
+
+      const successMsg = data.message || `Dados e sinopse de "${refreshed?.title || targetTitle}" atualizados com sucesso via IMDb!`;
+      showToast(successMsg, "success");
+      setFormSuccess(successMsg);
+
+      if (onMoviesUpdated) {
+        onMoviesUpdated();
+      }
+    } catch (err: any) {
+      console.error("Erro ao sincronizar IMDb:", err);
+      showToast(err.message || "Erro ao atualizar dados do IMDb.", "error");
+      setFormError(err.message || "Erro ao atualizar dados do IMDb.");
+    } finally {
+      setSyncingMovieId(null);
+    }
   };
 
   // Submit Form (Create / Edit)
@@ -1851,9 +1928,21 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                         <td className="py-3 px-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
+                              onClick={() => handleSyncMovieImdb(movie)}
+                              disabled={syncingMovieId === movie.id}
+                              className="p-1.5 rounded-lg bg-amber-950/20 border border-amber-900/40 hover:border-amber-500 hover:bg-amber-900/40 text-amber-400 hover:text-amber-300 transition-all cursor-pointer disabled:opacity-50"
+                              title="Atualizar Dados e Sinopse do IMDb"
+                            >
+                              {syncingMovieId === movie.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                              ) : (
+                                <RotateCcw className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                            <button
                               onClick={() => handleOpenEdit(movie)}
                               className="p-1.5 rounded-lg bg-gray-950 border border-gray-900 hover:border-red-600/30 hover:bg-gray-900 text-gray-300 hover:text-white transition-all cursor-pointer"
-                              title="Editar Título"
+                              title={movie.type === "serie" ? "Editar Série" : movie.type === "anime" ? "Editar Anime" : "Editar Filme"}
                             >
                               <Edit className="w-3.5 h-3.5" />
                             </button>
@@ -2363,7 +2452,7 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                   type="button"
                   onClick={() => {
                     setNotifTitle("🚀 Novas Funcionalidades Disponíveis!");
-                    setNotifMessage("Atualizamos a plataforma com suporte a Modo Cinema em tela cheia e acompanhamento de episódios no 'Continue Assistindo'!");
+                    setNotifMessage("Atualizamos a plataforma com melhorias no player e acompanhamento de episódios no 'Continue Assistindo'!");
                     setNotifType("success");
                     setNotifTarget("all");
                   }}
@@ -3866,6 +3955,32 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
               {/* Form elements */}
               <form onSubmit={handleFormSubmit} className="space-y-5" id="form-title-editor">
                 
+                {/* IMDb Data Refresh Action Bar */}
+                <div className="flex items-center justify-between bg-[#151515] p-3 rounded-2xl border border-gray-800/80">
+                  <div className="text-gray-300 text-xs font-bold flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>Sincronizar Dados do Catálogo</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleSyncMovieImdb()}
+                    disabled={syncingMovieId !== null}
+                    className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:bg-gray-800 text-black font-extrabold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-amber-500/20 shrink-0"
+                  >
+                    {syncingMovieId !== null ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Sincronizando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Atualizar Dados do IMDb</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
                 {/* Line 1: Title & Original Title */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">

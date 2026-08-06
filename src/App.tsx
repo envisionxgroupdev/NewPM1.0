@@ -49,7 +49,6 @@ export default function App() {
     playerType?: "none" | "trailer" | "superflix" | "warez";
     season?: number;
     episode?: number;
-    cinemaMode?: boolean;
   }>({});
 
   const [maintenanceConfig, setMaintenanceConfig] = useState<{
@@ -185,7 +184,6 @@ export default function App() {
       playerType: item?.playerType || "superflix",
       season: item?.season || 1,
       episode: item?.episode || 1,
-      cinemaMode: true,
     });
   };
 
@@ -1032,7 +1030,6 @@ export default function App() {
             initialPlayerType={modalResumeParams.playerType}
             initialSeason={modalResumeParams.season}
             initialEpisode={modalResumeParams.episode}
-            initialCinemaMode={modalResumeParams.cinemaMode}
             currentUser={currentUser}
             onOpenAuth={() => setIsAuthModalOpen(true)}
             playerAd={siteAds?.playerAd}
