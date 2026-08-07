@@ -195,6 +195,16 @@ export default function App() {
     if (metaDescEl) {
       metaDescEl.setAttribute("content", metaDesc);
     }
+
+    const canonicalEl = document.querySelector('link[rel="canonical"]');
+    if (canonicalEl) {
+      canonicalEl.setAttribute("href", window.location.href);
+    }
+
+    const ogUrlEl = document.querySelector('meta[property="og:url"]');
+    if (ogUrlEl) {
+      ogUrlEl.setAttribute("content", window.location.href);
+    }
   }, [selectedMovie, activeTab, searchQuery, selectedGenre]);
 
   useEffect(() => {

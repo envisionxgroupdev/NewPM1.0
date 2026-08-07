@@ -544,12 +544,21 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
-  // Security Headers Middleware
-  app.use((_req, res, next) => {
+  // CORS & Security Headers Middleware
+  app.use((req, res, next) => {
+    const origin = req.headers.origin || "*";
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-user-email");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "SAMEORIGIN");
     res.setHeader("X-XSS-Protection", "1; mode=block");
     res.setHeader("Referrer-Policy", "no-referrer-when-downgrade");
+
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(204);
+    }
     next();
   });
 
@@ -3104,7 +3113,7 @@ async function startServer() {
   // SEO: robots.txt
   app.get("/robots.txt", (req, res) => {
     res.type("text/plain");
-    const host = req.headers.host || "pipocamax.com";
+    const host = req.headers.host || "pipocamax.im";
     const protocol = req.headers["x-forwarded-proto"] || "https";
     const baseUrl = `${protocol}://${host}`;
     res.send(
@@ -3160,7 +3169,7 @@ async function startServer() {
   const handleSitemapIndex = async (req: any, res: any) => {
     res.type("application/xml");
     try {
-      const host = req.headers.host || "pipocamax.com";
+      const host = req.headers.host || "pipocamax.im";
       const protocol = req.headers["x-forwarded-proto"] || "https";
       const baseUrl = `${protocol}://${host}`;
       const nowIso = new Date().toISOString();
@@ -3203,7 +3212,7 @@ async function startServer() {
   // SEO: Sub-sitemap Main Pages
   app.get("/sitemap-main.xml", (req, res) => {
     res.type("application/xml");
-    const host = req.headers.host || "pipocamax.com";
+    const host = req.headers.host || "pipocamax.im";
     const protocol = req.headers["x-forwarded-proto"] || "https";
     const baseUrl = `${protocol}://${host}`;
 
@@ -3221,7 +3230,7 @@ async function startServer() {
   app.get("/sitemap-filmes.xml", async (req, res) => {
     res.type("application/xml");
     try {
-      const host = req.headers.host || "pipocamax.com";
+      const host = req.headers.host || "pipocamax.im";
       const protocol = req.headers["x-forwarded-proto"] || "https";
       const baseUrl = `${protocol}://${host}`;
 
@@ -3252,7 +3261,7 @@ async function startServer() {
   app.get("/sitemap-series.xml", async (req, res) => {
     res.type("application/xml");
     try {
-      const host = req.headers.host || "pipocamax.com";
+      const host = req.headers.host || "pipocamax.im";
       const protocol = req.headers["x-forwarded-proto"] || "https";
       const baseUrl = `${protocol}://${host}`;
 
@@ -3283,7 +3292,7 @@ async function startServer() {
   app.get("/sitemap-animes.xml", async (req, res) => {
     res.type("application/xml");
     try {
-      const host = req.headers.host || "pipocamax.com";
+      const host = req.headers.host || "pipocamax.im";
       const protocol = req.headers["x-forwarded-proto"] || "https";
       const baseUrl = `${protocol}://${host}`;
 
@@ -3314,7 +3323,7 @@ async function startServer() {
   app.get("/sitemap-all.xml", async (req, res) => {
     res.type("application/xml");
     try {
-      const host = req.headers.host || "pipocamax.com";
+      const host = req.headers.host || "pipocamax.im";
       const protocol = req.headers["x-forwarded-proto"] || "https";
       const baseUrl = `${protocol}://${host}`;
 
