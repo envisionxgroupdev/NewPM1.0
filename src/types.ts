@@ -79,3 +79,15 @@ export interface CustomCodesConfig {
   headerCode: string;
   footerCode: string;
 }
+
+export interface PopupBannerConfig {
+  enabled: boolean;
+  title: string;
+  message: string;
+  imageUrl?: string;
+  badgeText?: string;
+  buttonText?: string;
+  buttonUrl?: string;
+  showOncePerSession?: boolean;
+  updatedAt?: string;
+}

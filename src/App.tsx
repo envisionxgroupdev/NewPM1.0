@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Movie, ContinueWatchingItem, CustomCodesConfig, SiteAdsConfig } from "./types";
+import { Movie, ContinueWatchingItem, CustomCodesConfig, SiteAdsConfig, PopupBannerConfig } from "./types";
 import Header from "./components/Header";
 import HeroCarousel from "./components/HeroCarousel";
 import MovieCard from "./components/MovieCard";
@@ -14,6 +14,7 @@ import AdminPanel from "./components/AdminPanel";
 import ReleaseCalendar from "./components/ReleaseCalendar";
 import AdBanner from "./components/AdBanner";
 import CustomScriptInjector from "./components/CustomScriptInjector";
+import PopupNoticeModal from "./components/PopupNoticeModal";
 import { useUserSync } from "./hooks/useUserSync";
 import {
   getContinueWatchingList,
@@ -69,6 +70,8 @@ export default function App() {
   });
 
   const [siteAds, setSiteAds] = useState<SiteAdsConfig | null>(null);
+  const [popupBannerConfig, setPopupBannerConfig] = useState<PopupBannerConfig | null>(null);
+  const [showPopupNotice, setShowPopupNotice] = useState(false);
 
   useEffect(() => {
     const fetchPublicSettings = async () => {
@@ -110,6 +113,19 @@ export default function App() {
           if (data.ads) {
             setSiteAds(data.ads);
           }
+
+          if (data.popupBanner) {
+            setPopupBannerConfig(data.popupBanner);
+            if (data.popupBanner.enabled) {
+              const closedKey = `pipocamax_popup_closed_${data.popupBanner.updatedAt || "v1"}`;
+              const isClosedInSession = data.popupBanner.showOncePerSession ? sessionStorage.getItem(closedKey) : null;
+              if (!isClosedInSession) {
+                setShowPopupNotice(true);
+              }
+            } else {
+              setShowPopupNotice(false);
+            }
+          }
         }
       } catch (err) {
         console.warn("Erro ao buscar configurações públicas:", err);
@@ -119,6 +135,16 @@ export default function App() {
     const interval = setInterval(fetchPublicSettings, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleClosePopupNotice = () => {
+    if (popupBannerConfig) {
+      if (popupBannerConfig.showOncePerSession) {
+        const closedKey = `pipocamax_popup_closed_${popupBannerConfig.updatedAt || "v1"}`;
+        sessionStorage.setItem(closedKey, "true");
+      }
+    }
+    setShowPopupNotice(false);
+  };
 
   // Sync Continue Watching items from localStorage
   const refreshContinueWatching = () => {
@@ -1155,6 +1181,14 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Full Screen Banner Popup Notice Modal */}
+      {showPopupNotice && popupBannerConfig && (
+        <PopupNoticeModal
+          config={popupBannerConfig}
+          onClose={handleClosePopupNotice}
+        />
+      )}
     </div>
   );
 }

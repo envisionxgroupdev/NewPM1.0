@@ -784,22 +784,105 @@ async function startServer() {
     return localAdsConfig;
   }
 
+  let localPopupBannerConfig = {
+    enabled: false,
+    title: "Aviso Importante PipocaMax! 🍿",
+    message: "Seja bem-vindo ao PipocaMax! Seus filmes, séries e animes favoritos em alta definição sem travamentos.",
+    imageUrl: "",
+    badgeText: "COMUNICADO",
+    buttonText: "Entrar no Canal do Telegram",
+    buttonUrl: "https://t.me/pipocamax",
+    showOncePerSession: true,
+    updatedAt: new Date().toISOString()
+  };
+
+  async function getPopupBannerFromDb() {
+    const db = getFirestoreDb();
+    if (db) {
+      try {
+        const docSnap = await db.collection("settings").doc("popup_banner").get();
+        if (docSnap.exists) {
+          const data = docSnap.data();
+          return {
+            enabled: Boolean(data?.enabled),
+            title: String(data?.title || localPopupBannerConfig.title),
+            message: String(data?.message || localPopupBannerConfig.message),
+            imageUrl: String(data?.imageUrl || ""),
+            badgeText: String(data?.badgeText || localPopupBannerConfig.badgeText),
+            buttonText: String(data?.buttonText || localPopupBannerConfig.buttonText),
+            buttonUrl: String(data?.buttonUrl || localPopupBannerConfig.buttonUrl),
+            showOncePerSession: data?.showOncePerSession !== undefined ? Boolean(data.showOncePerSession) : true,
+            updatedAt: data?.updatedAt || localPopupBannerConfig.updatedAt
+          };
+        }
+      } catch (err) {
+        console.warn("Erro ao buscar Banner Popup do Firestore:", err);
+      }
+    }
+    return localPopupBannerConfig;
+  }
+
   // UNIFIED PUBLIC API for fast client initial loading
   app.get("/api/settings/public", async (_req, res) => {
     try {
-      const [maintenance, customCodes, ads] = await Promise.all([
+      const [maintenance, customCodes, ads, popupBanner] = await Promise.all([
         getMaintenanceConfigFromDb(),
         getCustomCodesFromDb(),
-        getAdsConfigFromDb()
+        getAdsConfigFromDb(),
+        getPopupBannerFromDb()
       ]);
-      res.json({ success: true, maintenance, customCodes, ads });
+      res.json({ success: true, maintenance, customCodes, ads, popupBanner });
     } catch (err: any) {
       res.json({
         success: true,
         maintenance: localMaintenanceConfig,
         customCodes: localCustomCodes,
-        ads: localAdsConfig
+        ads: localAdsConfig,
+        popupBanner: localPopupBannerConfig
       });
+    }
+  });
+
+  // GET Popup Banner (Admin)
+  app.get("/api/settings/popup-banner", requireAdmin, async (_req, res) => {
+    try {
+      const popupBanner = await getPopupBannerFromDb();
+      res.json({ success: true, popupBanner });
+    } catch (err: any) {
+      res.status(500).json({ error: "Erro ao ler configurações do banner de popup." });
+    }
+  });
+
+  // POST Popup Banner (Admin)
+  app.post("/api/settings/popup-banner", requireAdmin, async (req, res) => {
+    try {
+      const { enabled, title, message, imageUrl, badgeText, buttonText, buttonUrl, showOncePerSession } = req.body;
+
+      localPopupBannerConfig = {
+        enabled: Boolean(enabled),
+        title: (title || "Aviso Importante PipocaMax! 🍿").trim(),
+        message: (message || "").trim(),
+        imageUrl: (imageUrl || "").trim(),
+        badgeText: (badgeText || "COMUNICADO").trim(),
+        buttonText: (buttonText || "").trim(),
+        buttonUrl: (buttonUrl || "").trim(),
+        showOncePerSession: showOncePerSession !== undefined ? Boolean(showOncePerSession) : true,
+        updatedAt: new Date().toISOString()
+      };
+
+      const db = getFirestoreDb();
+      if (db) {
+        await db.collection("settings").doc("popup_banner").set(localPopupBannerConfig);
+      }
+
+      res.json({
+        success: true,
+        message: "Configurações do Banner Popup salvas com sucesso!",
+        popupBanner: localPopupBannerConfig
+      });
+    } catch (err: any) {
+      console.error("Erro ao salvar banner de popup:", err);
+      res.status(500).json({ error: "Erro interno ao salvar banner de popup." });
     }
   });
 

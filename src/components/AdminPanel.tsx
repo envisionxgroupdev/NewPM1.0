@@ -15,6 +15,7 @@ import {
 import { Movie, AdSlotConfig, SiteAdsConfig } from "../types";
 import MaintenanceScreen from "./MaintenanceScreen";
 import LazyImage from "./LazyImage";
+import PopupNoticeModal from "./PopupNoticeModal";
 
 interface AdminPanelProps {
   movies: Movie[];
@@ -349,6 +350,55 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
   const [maintFeedback, setMaintFeedback] = useState({ success: "", error: "" });
   const [maintPreviewOpen, setMaintPreviewOpen] = useState(false);
 
+  // Popup Banner Config states
+  const [popupEnabled, setPopupEnabled] = useState(false);
+  const [popupTitle, setPopupTitle] = useState("Aviso Importante PipocaMax! 🍿");
+  const [popupMessage, setPopupMessage] = useState("Seja bem-vindo ao PipocaMax! Seus filmes, séries e animes favoritos em alta definição.");
+  const [popupImageUrl, setPopupImageUrl] = useState("");
+  const [popupBadgeText, setPopupBadgeText] = useState("COMUNICADO");
+  const [popupButtonText, setPopupButtonText] = useState("Entrar no Canal do Telegram");
+  const [popupButtonUrl, setPopupButtonUrl] = useState("https://t.me/pipocamax");
+  const [popupShowOnce, setPopupShowOnce] = useState(true);
+  const [popupSaving, setPopupSaving] = useState(false);
+  const [popupFeedback, setPopupFeedback] = useState({ success: "", error: "" });
+  const [popupPreviewOpen, setPopupPreviewOpen] = useState(false);
+
+  const handleSavePopupBanner = async () => {
+    setPopupSaving(true);
+    setPopupFeedback({ success: "", error: "" });
+    try {
+      const rawUserEmail = currentUser?.email || localStorage.getItem("pipocamax_user_email") || "admin@pipocamax.com";
+      const response = await fetch("/api/settings/popup-banner", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": rawUserEmail
+        },
+        body: JSON.stringify({
+          enabled: popupEnabled,
+          title: popupTitle,
+          message: popupMessage,
+          imageUrl: popupImageUrl,
+          badgeText: popupBadgeText,
+          buttonText: popupButtonText,
+          buttonUrl: popupButtonUrl,
+          showOncePerSession: popupShowOnce
+        })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setPopupFeedback({ success: data.message || "Banner Popup salvo com sucesso!", error: "" });
+        showToast(data.message || "Banner Popup salvo com sucesso!", "success");
+      } else {
+        setPopupFeedback({ success: "", error: data.error || "Erro ao salvar Banner Popup." });
+      }
+    } catch (err: any) {
+      setPopupFeedback({ success: "", error: "Erro ao se conectar com o servidor." });
+    } finally {
+      setPopupSaving(false);
+    }
+  };
+
   const handleSaveCustomCodes = async () => {
     setSavingCustomCodes(true);
     setCustomCodesFeedback({ success: "", error: "" });
@@ -505,6 +555,16 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
                 code: publicData.ads.popunderAd?.code || ""
               }
             });
+          }
+          if (publicData.popupBanner) {
+            setPopupEnabled(Boolean(publicData.popupBanner.enabled));
+            if (publicData.popupBanner.title) setPopupTitle(publicData.popupBanner.title);
+            if (publicData.popupBanner.message !== undefined) setPopupMessage(publicData.popupBanner.message);
+            if (publicData.popupBanner.imageUrl !== undefined) setPopupImageUrl(publicData.popupBanner.imageUrl);
+            if (publicData.popupBanner.badgeText !== undefined) setPopupBadgeText(publicData.popupBanner.badgeText);
+            if (publicData.popupBanner.buttonText !== undefined) setPopupButtonText(publicData.popupBanner.buttonText);
+            if (publicData.popupBanner.buttonUrl !== undefined) setPopupButtonUrl(publicData.popupBanner.buttonUrl);
+            if (publicData.popupBanner.showOncePerSession !== undefined) setPopupShowOnce(Boolean(publicData.popupBanner.showOncePerSession));
           }
         }
       } catch (err) {
@@ -3232,6 +3292,221 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
         {/* VIEW 4: SETTINGS SUB-TAB */}
         {activeSubTab === "settings" && (
           <div className="max-w-4xl mx-auto space-y-8">
+            {/* CARD 0: BANNER POPUP AVISOS FULLSCREEN */}
+            <div className="bg-[#0c0c0c] border border-amber-500/30 p-6 md:p-8 rounded-3xl shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 border-b border-gray-900 pb-5">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-100 flex items-center gap-2">
+                    <Megaphone className="w-5 h-5 text-amber-500" />
+                    <span>Banner Popup de Avisos (Tela Cheia)</span>
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-1 font-sans">
+                    Configure um aviso visual preenchendo a tela toda para transmitir recados, novidades e comunicados importantes com botão de fechar.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className={`px-3 py-1.5 rounded-full text-xs font-extrabold uppercase tracking-wider border flex items-center gap-1.5 ${
+                    popupEnabled
+                      ? "bg-amber-500/15 border-amber-500/40 text-amber-400"
+                      : "bg-gray-800/60 border-gray-700/60 text-gray-400"
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${popupEnabled ? "bg-amber-400 animate-pulse" : "bg-gray-500"}`} />
+                    {popupEnabled ? "POPUP ATIVO" : "DESATIVADO"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-6 font-sans">
+                {/* Master Toggle Switch */}
+                <div className="flex items-center justify-between p-4 rounded-2xl bg-[#141414] border border-gray-800">
+                  <div className="space-y-0.5">
+                    <span className="text-sm font-bold text-white block">
+                      Ativar Banner Popup de Avisos no Site
+                    </span>
+                    <span className="text-xs text-gray-400 block">
+                      Quando ativado, os visitantes do site verão o aviso em tela cheia ao acessar a página.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPopupEnabled(!popupEnabled)}
+                    className={`relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      popupEnabled ? "bg-amber-500" : "bg-gray-800"
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                        popupEnabled ? "translate-x-6" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* Form Fields */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Title */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                      Título do Aviso
+                    </label>
+                    <input
+                      type="text"
+                      value={popupTitle}
+                      onChange={(e) => setPopupTitle(e.target.value)}
+                      placeholder="Ex: Aviso Importante PipocaMax! 🍿"
+                      className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-4 rounded-xl transition-all"
+                    />
+                  </div>
+
+                  {/* Badge / Tag text */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                      Texto da Tag / Selo Superior
+                    </label>
+                    <input
+                      type="text"
+                      value={popupBadgeText}
+                      onChange={(e) => setPopupBadgeText(e.target.value)}
+                      placeholder="Ex: COMUNICADO, NOVIDADE, URGENTE"
+                      className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-4 rounded-xl transition-all"
+                    />
+                  </div>
+                </div>
+
+                {/* Message Textarea */}
+                <div className="space-y-1.5">
+                  <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                    Mensagem / Conteúdo do Aviso para os Visitantes
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={popupMessage}
+                    onChange={(e) => setPopupMessage(e.target.value)}
+                    placeholder="Escreva a mensagem ou aviso detalhado que aparecerá no centro da tela..."
+                    className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-4 rounded-xl transition-all resize-y"
+                  />
+                </div>
+
+                {/* Image URL (Optional) */}
+                <div className="space-y-1.5">
+                  <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                    URL da Imagem do Banner (Opcional)
+                  </label>
+                  <input
+                    type="url"
+                    value={popupImageUrl}
+                    onChange={(e) => setPopupImageUrl(e.target.value)}
+                    placeholder="https://exemplo.com/banner-imagem.jpg (deixe em branco se não quiser imagem)"
+                    className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-4 rounded-xl transition-all font-mono"
+                  />
+                  <p className="text-[11px] text-gray-500">
+                    Se preenchido, exibirá uma imagem no topo do aviso do popup.
+                  </p>
+                </div>
+
+                {/* Button Action link (Optional) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                      Texto do Botão de Ação (Opcional)
+                    </label>
+                    <input
+                      type="text"
+                      value={popupButtonText}
+                      onChange={(e) => setPopupButtonText(e.target.value)}
+                      placeholder="Ex: Entrar no Canal Telegram"
+                      className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-4 rounded-xl transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-gray-300 font-bold uppercase tracking-wider block">
+                      Link / URL do Botão (Opcional)
+                    </label>
+                    <input
+                      type="url"
+                      value={popupButtonUrl}
+                      onChange={(e) => setPopupButtonUrl(e.target.value)}
+                      placeholder="Ex: https://t.me/pipocamax"
+                      className="w-full bg-black border border-gray-800 focus:border-amber-500 focus:outline-none text-white text-sm py-2.5 px-4 rounded-xl transition-all font-mono"
+                    />
+                  </div>
+                </div>
+
+                {/* Session frequency option */}
+                <div className="flex items-center justify-between p-4 rounded-2xl bg-[#141414] border border-gray-800">
+                  <div className="space-y-0.5">
+                    <span className="text-sm font-bold text-white block">
+                      Exibir Apenas 1 Vez por Sessão para Cada Visitante
+                    </span>
+                    <span className="text-xs text-gray-400 block">
+                      Evita incomodar o usuário repetidamente: após fechar o popup, ele só reaparece se o navegador for reiniciado ou se você atualizar o aviso.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPopupShowOnce(!popupShowOnce)}
+                    className={`relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      popupShowOnce ? "bg-amber-500" : "bg-gray-800"
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                        popupShowOnce ? "translate-x-6" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* Feedback Alerts */}
+                {popupFeedback.error && (
+                  <div className="p-3 bg-red-950/20 border border-red-900/30 text-red-400 text-xs rounded-xl flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>{popupFeedback.error}</span>
+                  </div>
+                )}
+
+                {popupFeedback.success && (
+                  <div className="p-3 bg-[#00d573]/10 border border-[#00d573]/20 text-[#00d573] text-xs rounded-xl flex items-center gap-2">
+                    <Check className="w-4 h-4 shrink-0" />
+                    <span>{popupFeedback.success}</span>
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleSavePopupBanner}
+                    disabled={popupSaving}
+                    className="w-full sm:flex-1 bg-amber-600 hover:bg-amber-500 disabled:bg-gray-800 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-amber-600/20"
+                  >
+                    {popupSaving ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Salvando Configuração...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Database className="w-4 h-4" />
+                        <span>Salvar Configuração do Banner Popup</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPopupPreviewOpen(true)}
+                    className="w-full sm:w-auto bg-[#1a1a1a] hover:bg-[#252525] border border-gray-800 text-gray-200 hover:text-white font-bold py-3 px-5 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Eye className="w-4 h-4 text-amber-400" />
+                    <span>Pré-visualizar Popup em Tela Cheia</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
             {/* CARD 1: SYSTEM MAINTENANCE MODE SETTINGS */}
             <div className="bg-[#0c0c0c] border border-gray-900 p-6 md:p-8 rounded-3xl shadow-xl">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 border-b border-gray-900 pb-5">
@@ -4880,6 +5155,25 @@ export default function AdminPanel({ movies, onMoviesUpdated, currentUser }: Adm
           </div>
         )}
       </AnimatePresence>
+
+      {/* Preview Modal for Popup Banner Notice */}
+      {popupPreviewOpen && (
+        <PopupNoticeModal
+          config={{
+            enabled: popupEnabled,
+            title: popupTitle,
+            message: popupMessage,
+            imageUrl: popupImageUrl,
+            badgeText: popupBadgeText,
+            buttonText: popupButtonText,
+            buttonUrl: popupButtonUrl,
+            showOncePerSession: popupShowOnce,
+            updatedAt: new Date().toISOString()
+          }}
+          onClose={() => setPopupPreviewOpen(false)}
+          isPreview={true}
+        />
+      )}
 
     </div>
   );

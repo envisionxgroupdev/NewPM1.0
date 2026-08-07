@@ -108,14 +108,6 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalP
     }
   };
 
-  const handleQuickLogin = (quickEmail: string, quickPass: string) => {
-    setEmail(quickEmail);
-    setPassword(quickPass);
-    setIsLogin(true);
-    setError("");
-    setSuccess("");
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
@@ -283,7 +275,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalP
         </form>
 
         {/* Auth Toggle */}
-        <div className="mt-5 text-center space-y-3">
+        <div className="mt-5 text-center">
           <button 
             type="button"
             onClick={() => {
@@ -295,22 +287,6 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalP
           >
             {isLogin ? "Não tem uma conta? Cadastre-se grátis" : "Já possui conta? Faça login aqui"}
           </button>
-
-          {/* Quick Admin Test Login Shortcuts */}
-          <div className="pt-3 border-t border-gray-900/80">
-            <p className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-2">
-              Acesso Rápido de Teste (1-Clique)
-            </p>
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <button
-                type="button"
-                onClick={() => handleQuickLogin("admin@pipocamax.com", "admin")}
-                className="text-[11px] font-bold text-gray-300 hover:text-white bg-gray-900 hover:bg-gray-800 border border-gray-800 px-3 py-1.5 rounded-lg transition-all cursor-pointer"
-              >
-                🔑 Admin PipocaMax
-              </button>
-            </div>
-          </div>
         </div>
       </motion.div>
     </div>
